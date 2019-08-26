@@ -7,6 +7,7 @@
 #include <AP_Logger/AP_Logger.h>
 #include <GCS_MAVLink/GCS_MAVLink.h>
 #include <GCS_MAVLink/GCS.h>
+#include <AP_GPS/AP_GPS.h>
 
 extern const AP_HAL::HAL& hal;
 
@@ -113,18 +114,18 @@ void AP_Mount_SoloGimbal::send_mount_status(mavlink_channel_t chan)
 /*
   handle a GIMBAL_REPORT message
  */
-void AP_Mount_SoloGimbal::handle_gimbal_report(mavlink_channel_t chan, const mavlink_message_t *msg)
+void AP_Mount_SoloGimbal::handle_gimbal_report(mavlink_channel_t chan, const mavlink_message_t &msg)
 {
     _gimbal.update_target(_angle_ef_target_rad);
     _gimbal.receive_feedback(chan,msg);
 
-    AP_Logger *df = AP_Logger::get_singleton();
-    if (df == nullptr) {
+    AP_Logger *logger = AP_Logger::get_singleton();
+    if (logger == nullptr) {
         return;
     }
 
-    if(!_params_saved && df->logging_started()) {
-        _gimbal.fetch_params();       //last parameter save might not be stored in dataflash so retry
+    if(!_params_saved && logger->logging_started()) {
+        _gimbal.fetch_params();       //last parameter save might not be stored in logger so retry
         _params_saved = true;
     }
 
@@ -133,7 +134,7 @@ void AP_Mount_SoloGimbal::handle_gimbal_report(mavlink_channel_t chan, const mav
     }
 }
 
-void AP_Mount_SoloGimbal::handle_param_value(const mavlink_message_t *msg)
+void AP_Mount_SoloGimbal::handle_param_value(const mavlink_message_t &msg)
 {
     _gimbal.handle_param_value(msg);
 }
@@ -141,7 +142,7 @@ void AP_Mount_SoloGimbal::handle_param_value(const mavlink_message_t *msg)
 /*
   handle a GIMBAL_REPORT message
  */
-void AP_Mount_SoloGimbal::handle_gimbal_torque_report(mavlink_channel_t chan, const mavlink_message_t *msg)
+void AP_Mount_SoloGimbal::handle_gimbal_torque_report(mavlink_channel_t chan, const mavlink_message_t &msg)
 {
     _gimbal.disable_torque_report();
 }

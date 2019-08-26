@@ -155,7 +155,7 @@ private:
     // get the closest distance between 2 line segments and the point midway between the closest points
     static dist_point segment_segment_dist(const Vector3f& p1, const Vector3f& p2, const Vector3f& p3, const Vector3f& p4);
 
-    // de-activate SmartRTL, send warning to GCS and log to dataflash
+    // de-activate SmartRTL, send warning to GCS and logger
     void deactivate(SRTL_Actions action, const char *reason);
 
     // logging
@@ -196,7 +196,7 @@ private:
         simplify_start_finish_t* stack;
         uint16_t stack_max;     // maximum number of elements in the _simplify_stack array
         uint16_t stack_count;   // number of elements in _simplify_stack array
-        Bitmask bitmask{SMARTRTL_POINTS_MAX};  // simplify algorithm clears bits for each point that can be removed
+        Bitmask<SMARTRTL_POINTS_MAX> bitmask;  // simplify algorithm clears bits for each point that can be removed
     } _simplify;
 
     // Pruning

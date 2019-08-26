@@ -21,6 +21,7 @@
 #include <AP_SpdHgtControl/AP_SpdHgtControl.h>
 #include <AP_Navigation/AP_Navigation.h>
 #include "AP_Landing_Deepstall.h"
+#include <AP_Common/Location.h>
 
 /// @class  AP_Landing
 /// @brief  Class managing ArduPlane landing methods
@@ -117,7 +118,7 @@ private:
     // same as land_slope but sampled once before a rangefinder changes the slope. This should be the original mission planned slope
     float initial_slope;
 
-    // calculated approach slope during auto-landing: ((prev_WP_loc.alt - next_WP_loc.alt)*0.01f - flare_sec * sink_rate) / get_distance(prev_WP_loc, next_WP_loc)
+    // calculated approach slope during auto-landing: ((prev_WP_loc.alt - next_WP_loc.alt)*0.01f - flare_sec * sink_rate) / prev_WP_loc.get_distance(next_WP_loc)
     float slope;
 
     AP_Mission &mission;

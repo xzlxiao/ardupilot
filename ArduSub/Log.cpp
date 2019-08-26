@@ -57,7 +57,7 @@ void Sub::Log_Write_Attitude()
     targets.z = wrap_360_cd(targets.z);
     logger.Write_Attitude(ahrs, targets);
 
-    logger.Write_EKF(ahrs);
+    AP::ahrs_navekf().Log_Write();
     logger.Write_AHRS2(ahrs);
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     sitl.Log_Write_SIMSTATE();
@@ -202,38 +202,19 @@ void Sub::Log_Write_Data(uint8_t id, float value)
     }
 }
 
-struct PACKED log_Error {
-    LOG_PACKET_HEADER;
-    uint64_t time_us;
-    uint8_t sub_system;
-    uint8_t error_code;
-};
-
-// Write an error packet
-void Sub::Log_Write_Error(uint8_t sub_system, uint8_t error_code)
-{
-    struct log_Error pkt = {
-        LOG_PACKET_HEADER_INIT(LOG_ERROR_MSG),
-        time_us       : AP_HAL::micros64(),
-        sub_system    : sub_system,
-        error_code    : error_code,
-    };
-    logger.WriteCriticalBlock(&pkt, sizeof(pkt));
-}
-
 // logs when baro or compass becomes unhealthy
 void Sub::Log_Sensor_Health()
 {
     // check baro
     if (sensor_health.baro != barometer.healthy()) {
         sensor_health.baro = barometer.healthy();
-        Log_Write_Error(ERROR_SUBSYSTEM_BARO, (sensor_health.baro ? ERROR_CODE_ERROR_RESOLVED : ERROR_CODE_UNHEALTHY));
+        AP::logger().Write_Error(LogErrorSubsystem::BARO, (sensor_health.baro ? LogErrorCode::ERROR_RESOLVED : LogErrorCode::UNHEALTHY));
     }
 
     // check compass
     if (sensor_health.compass != compass.healthy()) {
         sensor_health.compass = compass.healthy();
-        Log_Write_Error(ERROR_SUBSYSTEM_COMPASS, (sensor_health.compass ? ERROR_CODE_ERROR_RESOLVED : ERROR_CODE_UNHEALTHY));
+        AP::logger().Write_Error(LogErrorSubsystem::COMPASS, (sensor_health.compass ? LogErrorCode::ERROR_RESOLVED : LogErrorCode::UNHEALTHY));
     }
 }
 
@@ -275,8 +256,6 @@ const struct LogStructure Sub::log_structure[] = {
       "CTUN", "Qfffffffccfhh", "TimeUS,ThI,ABst,ThO,ThH,DAlt,Alt,BAlt,DSAlt,SAlt,TAlt,DCRt,CRt", "s----mmmmmmnn", "F----00BBBBBB" },
     { LOG_MOTBATT_MSG, sizeof(log_MotBatt),
       "MOTB", "Qffff",  "TimeUS,LiftMax,BatVolt,BatRes,ThLimit", "s-vw-", "F-00-" },
-    { LOG_EVENT_MSG, sizeof(log_Event),         
-      "EV",   "QB",           "TimeUS,Id", "s-", "F-" },
     { LOG_DATA_INT16_MSG, sizeof(log_Data_Int16t),         
       "D16",   "QBh",         "TimeUS,Id,Value", "s--", "F--" },
     { LOG_DATA_UINT16_MSG, sizeof(log_Data_UInt16t),         
@@ -287,8 +266,6 @@ const struct LogStructure Sub::log_structure[] = {
       "DU32",  "QBI",         "TimeUS,Id,Value", "s--", "F--" },
     { LOG_DATA_FLOAT_MSG, sizeof(log_Data_Float),         
       "DFLT",  "QBf",         "TimeUS,Id,Value", "s--", "F--" },
-    { LOG_ERROR_MSG, sizeof(log_Error),         
-      "ERR",   "QBB",         "TimeUS,Subsys,ECode", "s--", "F--" },
     { LOG_GUIDEDTARGET_MSG, sizeof(log_GuidedTarget),
       "GUID",  "QBffffff",    "TimeUS,Type,pX,pY,pZ,vX,vY,vZ", "s-mmmnnn", "F-000000" },
 };
@@ -319,7 +296,6 @@ void Sub::Log_Write_Data(uint8_t id, uint32_t value) {}
 void Sub::Log_Write_Data(uint8_t id, int16_t value) {}
 void Sub::Log_Write_Data(uint8_t id, uint16_t value) {}
 void Sub::Log_Write_Data(uint8_t id, float value) {}
-void Sub::Log_Write_Error(uint8_t sub_system, uint8_t error_code) {}
 void Sub::Log_Sensor_Health() {}
 void Sub::Log_Write_GuidedTarget(uint8_t target_type, const Vector3f& pos_target, const Vector3f& vel_target) {}
 void Sub::Log_Write_Vehicle_Startup_Messages() {}

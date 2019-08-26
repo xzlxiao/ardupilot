@@ -81,6 +81,8 @@
 
 #define ARRAY_SIZE(_arr) (sizeof(_arr) / sizeof(_arr[0]))
 
+#define UINT16_VALUE(hbyte, lbyte) (static_cast<uint16_t>((hbyte<<8)|lbyte))
+
 /*
  * See UNUSED_RESULT. The difference is that it receives @uniq_ as the name to
  * be used for its internal variable.
@@ -112,10 +114,10 @@
 // templates are used for this because the compiler's output will
 // usually contain details of the template instantiation so you can
 // see how the actual size differs from the expected size.
-template<typename s, int s_size, int t> struct _assert_storage_size {
+template<typename s, size_t s_size, size_t t> struct _assert_storage_size {
     static_assert(s_size == t, "wrong size");
 };
-template<typename s, int t> struct assert_storage_size {
+template<typename s, size_t t> struct assert_storage_size {
     _assert_storage_size<s, sizeof(s), t> _member;
 };
 
@@ -131,3 +133,5 @@ template<typename s, int t> struct assert_storage_size {
   False otherwise.
 */
 bool is_bounded_int32(int32_t value, int32_t lower_bound, int32_t upper_bound);
+
+bool hex_to_uint8(uint8_t a, uint8_t &res);  // return the uint8 value of an ascii hex character

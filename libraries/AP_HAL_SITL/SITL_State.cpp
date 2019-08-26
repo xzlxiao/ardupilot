@@ -85,7 +85,7 @@ void SITL_State::_sitl_setup(const char *home_str)
         // setup some initial values
 #ifndef HIL_MODE
         _update_airspeed(0);
-        _update_gps(0, 0, 0, 0, 0, 0, false);
+        _update_gps(0, 0, 0, 0, 0, 0, 0, false);
         _update_rangefinder(0);
 #endif
         if (enable_gimbal) {
@@ -96,6 +96,7 @@ void SITL_State::_sitl_setup(const char *home_str)
         sitl_model->set_gripper_servo(&_sitl->gripper_sim);
         sitl_model->set_gripper_epm(&_sitl->gripper_epm_sim);
         sitl_model->set_parachute(&_sitl->parachute_sim);
+        sitl_model->set_precland(&_sitl->precland_sim);
 
         if (_use_fg_view) {
             fg_socket.connect(_fg_address, _fg_view_port);
@@ -169,7 +170,7 @@ void SITL_State::_fdm_input_step(void)
     _scheduler->sitl_begin_atomic();
 
     if (_update_count == 0 && _sitl != nullptr) {
-        _update_gps(0, 0, 0, 0, 0, 0, false);
+        _update_gps(0, 0, 0, 0, 0, 0, 0, false);
         _scheduler->timer_event();
         _scheduler->sitl_end_atomic();
         return;
@@ -179,6 +180,7 @@ void SITL_State::_fdm_input_step(void)
         _update_gps(_sitl->state.latitude, _sitl->state.longitude,
                     _sitl->state.altitude,
                     _sitl->state.speedN, _sitl->state.speedE, _sitl->state.speedD,
+                    _sitl->state.yawDeg,
                     !_sitl->gps_disable);
         _update_airspeed(_sitl->state.airspeed);
         _update_rangefinder(_sitl->state.range);
@@ -229,13 +231,26 @@ int SITL_State::sim_fd(const char *name, const char *arg)
  */
 void SITL_State::_check_rc_input(void)
 {
-    ssize_t size;
+    uint32_t count = 0;
+    while (_read_rc_sitl_input()) {
+        count++;
+    }
+
+    if (count > 100) {
+        ::fprintf(stderr, "Read %u rc inputs\n", count);
+    }
+}
+
+bool SITL_State::_read_rc_sitl_input()
+{
     struct pwm_packet {
         uint16_t pwm[16];
     } pwm_pkt;
 
-    size = _sitl_rc_in.recv(&pwm_pkt, sizeof(pwm_pkt), 0);
+    const ssize_t size = _sitl_rc_in.recv(&pwm_pkt, sizeof(pwm_pkt), 0);
     switch (size) {
+    case -1:
+        return false;
     case 8*2:
     case 16*2: {
         // a packet giving the receiver PWM inputs
@@ -259,9 +274,12 @@ void SITL_State::_check_rc_input(void)
                 pwm_input[i] = pwm;
             }
         }
-        break;
+        return true;
     }
+    default:
+        fprintf(stderr, "Malformed SITL RC input (%li)", size);
     }
+    return false;
 }
 
 /*
@@ -313,7 +331,7 @@ void SITL_State::_fdm_input_local(void)
     _simulator_servos(input);
 
     // update the model
-    sitl_model->update(input);
+    sitl_model->update_model(input);
 
     // get FDM output from the model
     if (_sitl) {

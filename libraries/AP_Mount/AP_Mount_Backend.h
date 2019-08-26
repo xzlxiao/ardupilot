@@ -21,6 +21,7 @@
 
 #include <AP_Common/AP_Common.h>
 #include "AP_Mount.h"
+#include <RC_Channel/RC_Channel.h>
 
 class AP_Mount_Backend
 {
@@ -69,10 +70,10 @@ public:
     virtual void send_mount_status(mavlink_channel_t chan) = 0;
 
     // handle a GIMBAL_REPORT message
-    virtual void handle_gimbal_report(mavlink_channel_t chan, const mavlink_message_t *msg) {}
+    virtual void handle_gimbal_report(mavlink_channel_t chan, const mavlink_message_t &msg) {}
 
     // handle a PARAM_VALUE message
-    virtual void handle_param_value(const mavlink_message_t *msg) {}
+    virtual void handle_param_value(const mavlink_message_t &msg) {}
 
     // send a GIMBAL_REPORT message to the GCS
     virtual void send_gimbal_report(const mavlink_channel_t chan) {}
@@ -82,8 +83,7 @@ protected:
     // update_targets_from_rc - updates angle targets (i.e. _angle_ef_target_rad) using input from receiver
     void update_targets_from_rc();
 
-    // angle_input, angle_input_rad - convert RC input into an earth-frame target angle
-    int32_t angle_input(const RC_Channel* rc, int16_t angle_min, int16_t angle_max);
+    // angle_input_rad - convert RC input into an earth-frame target angle
     float angle_input_rad(const RC_Channel* rc, int16_t angle_min, int16_t angle_max);
 
     // calc_angle_to_location - calculates the earth-frame roll, tilt and pan angles (and radians) to point at the given target

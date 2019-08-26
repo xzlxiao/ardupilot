@@ -30,47 +30,11 @@
 #endif
 #endif
 
-#if CONFIG_HAL_BOARD == HAL_BOARD_PX4
-# define BOARD_SAFETY_ENABLE_DEFAULT 1
-#if defined(CONFIG_ARCH_BOARD_PX4FMU_V1)
-#define BOARD_PWM_COUNT_DEFAULT 2
-#define BOARD_SER1_RTSCTS_DEFAULT 0 // no flow control on UART5 on FMUv1
-#elif defined(CONFIG_ARCH_BOARD_PX4FMU_V4)
-#define BOARD_PWM_COUNT_DEFAULT 6
-#define BOARD_SER1_RTSCTS_DEFAULT 2
-#elif defined(CONFIG_ARCH_BOARD_AEROFC_V1)
-#define BOARD_PWM_COUNT_DEFAULT 0
-#define BOARD_SER1_RTSCTS_DEFAULT 0
-# undef BOARD_SAFETY_ENABLE_DEFAULT
-# define BOARD_SAFETY_ENABLE_DEFAULT 0
-#else // V2
-#define BOARD_PWM_COUNT_DEFAULT 4
-#define BOARD_SER1_RTSCTS_DEFAULT 2
-#endif
 #ifndef BOARD_TYPE_DEFAULT
 #define BOARD_TYPE_DEFAULT PX4_BOARD_AUTO
 #endif
 
-#elif CONFIG_HAL_BOARD == HAL_BOARD_VRBRAIN
-# define BOARD_SAFETY_ENABLE_DEFAULT 0
-# define BOARD_PWM_COUNT_DEFAULT 8
-# if defined(CONFIG_ARCH_BOARD_VRBRAIN_V51)
-#  define BOARD_TYPE_DEFAULT VRX_BOARD_BRAIN51
-# elif defined(CONFIG_ARCH_BOARD_VRBRAIN_V52)
-#  define BOARD_TYPE_DEFAULT VRX_BOARD_BRAIN52
-# elif defined(CONFIG_ARCH_BOARD_VRBRAIN_V52E)
-#  define BOARD_TYPE_DEFAULT VRX_BOARD_BRAIN52E
-# elif defined(CONFIG_ARCH_BOARD_VRUBRAIN_V51)
-#  define BOARD_TYPE_DEFAULT VRX_BOARD_UBRAIN51
-# elif defined(CONFIG_ARCH_BOARD_VRUBRAIN_V52)
-#  define BOARD_TYPE_DEFAULT VRX_BOARD_UBRAIN52
-# elif defined(CONFIG_ARCH_BOARD_VRCORE_V10)
-#  define BOARD_TYPE_DEFAULT VRX_BOARD_CORE10
-# elif defined(CONFIG_ARCH_BOARD_VRBRAIN_V54)
-#  define BOARD_TYPE_DEFAULT VRX_BOARD_BRAIN54
-# endif
-
-#elif CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
+#if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
 # define BOARD_SAFETY_ENABLE_DEFAULT 1
 #ifndef BOARD_PWM_COUNT_DEFAULT
 # define BOARD_PWM_COUNT_DEFAULT 6
@@ -102,6 +66,18 @@
 
 #ifndef BOARD_CONFIG_BOARD_VOLTAGE_MIN
 #define BOARD_CONFIG_BOARD_VOLTAGE_MIN 4.3f
+#endif
+
+#ifndef HAL_BRD_OPTIONS_DEFAULT
+#if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
+#define HAL_BRD_OPTIONS_DEFAULT BOARD_OPTION_WATCHDOG
+#else
+#define HAL_BRD_OPTIONS_DEFAULT 0
+#endif
+#endif
+
+#ifndef HAL_DEFAULT_BOOT_DELAY
+#define HAL_DEFAULT_BOOT_DELAY 0
 #endif
 
 extern const AP_HAL::HAL& hal;
@@ -256,6 +232,30 @@ const AP_Param::GroupInfo AP_BoardConfig::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("SD_SLOWDOWN",  17,     AP_BoardConfig, _sdcard_slowdown,  0),
 #endif
+
+#ifdef HAL_GPIO_PWM_VOLT_PIN
+    // @Param: PWM_VOLT_SEL
+    // @DisplayName: Set PWM Out Voltage
+    // @Description: This sets the voltage max for PWM output pulses. 0 for 3.3V and 1 for 5V output.
+    // @Values: 0:3.3V,1:5V
+    // @User: Advanced
+    AP_GROUPINFO("PWM_VOLT_SEL", 18, AP_BoardConfig, _pwm_volt_sel, 0),
+#endif
+
+    // @Param: OPTIONS
+    // @DisplayName: Board options
+    // @Description: Board specific option flags
+    // @Bitmask: 0:Enable hardware watchdog
+    // @User: Advanced
+    AP_GROUPINFO("OPTIONS", 19, AP_BoardConfig, _options, HAL_BRD_OPTIONS_DEFAULT),
+
+    // @Param: BOOT_DELAY
+    // @DisplayName: Boot delay
+    // @Description: This adds a delay in milliseconds to boot to ensure peripherals initialise fully
+    // @Range: 0 10000
+    // @Units: ms
+    // @User: Advanced
+    AP_GROUPINFO("BOOT_DELAY", 20, AP_BoardConfig, _boot_delay_ms, HAL_DEFAULT_BOOT_DELAY),
     
     AP_GROUPEND
 };
@@ -273,6 +273,16 @@ void AP_BoardConfig::init()
 
     AP::rtc().set_utc_usec(hal.util->get_hw_rtc(), AP_RTC::SOURCE_HW);
 
+    if (_boot_delay_ms > 0) {
+        uint16_t delay_ms = uint16_t(_boot_delay_ms.get());
+        if (hal.util->was_watchdog_armed() && delay_ms > 200) {
+            // don't delay a long time on watchdog reset, the pilot
+            // may be able to save the vehicle
+            delay_ms = 200;
+        }
+        hal.scheduler->delay(delay_ms);
+    }
+    
 #if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS && defined(USE_POSIX)
     uint8_t slowdown = constrain_int16(_sdcard_slowdown.get(), 0, 32);
     const uint8_t max_slowdown = 8;
@@ -296,9 +306,6 @@ void AP_BoardConfig::set_default_safety_ignore_mask(uint16_t mask)
 {
 #if HAL_HAVE_SAFETY_SWITCH
     state.ignore_safety_channels.set_default(mask);
-#if CONFIG_HAL_BOARD == HAL_BOARD_PX4
-    px4_setup_safety_mask();
-#endif
 #endif
 }
 

@@ -303,7 +303,7 @@ char *baseext ( char *str );
 int chdir ( const char *pathname );
 int chmod ( const char *pathname , mode_t mode );
 int dirname ( char *str );
-//int utime(const char *filename, const struct utimbuf *times);
+int utime(const char *filename, const struct utimbuf *times);
 
 #if 0
  int fchmod ( int fd , mode_t mode );
@@ -314,7 +314,7 @@ int mkdir ( const char *pathname , mode_t mode );
 int rename ( const char *oldpath , const char *newpath );
 int rmdir ( const char *pathname );
 int unlink ( const char *pathname );
-int remove(const char *pathname);
+int __wrap_remove(const char *pathname);
 int closedir ( DIR *dirp );
 DIR *opendir ( const char *pathdir );
 struct dirent *readdir ( DIR *dirp );

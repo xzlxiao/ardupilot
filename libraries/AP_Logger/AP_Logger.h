@@ -6,17 +6,10 @@
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Common/AP_Common.h>
 #include <AP_Param/AP_Param.h>
-#include <AP_GPS/AP_GPS.h>
 #include <AP_InertialSensor/AP_InertialSensor.h>
-#include <AP_RSSI/AP_RSSI.h>
-#include <AP_Baro/AP_Baro.h>
 #include <AP_AHRS/AP_AHRS.h>
-#include <AP_Vehicle/AP_Vehicle.h>
 #include <AP_Mission/AP_Mission.h>
-#include <AP_Airspeed/AP_Airspeed.h>
-#include <AP_BattMonitor/AP_BattMonitor.h>
 #include <AP_RPM/AP_RPM.h>
-#include <AP_RangeFinder/AP_RangeFinder.h>
 #include <AP_Logger/LogStructure.h>
 #include <AP_Motors/AP_Motors.h>
 #include <AP_Rally/AP_Rally.h>
@@ -29,13 +22,6 @@
 #include "LoggerMessageWriter.h"
 
 class AP_Logger_Backend;
-
-enum AP_Logger_Backend_Type {
-    DATAFLASH_BACKEND_NONE      = 0,
-    DATAFLASH_BACKEND_FILE      = (1<<0),
-    DATAFLASH_BACKEND_MAVLINK   = (1<<1),
-    DATAFLASH_BACKEND_BLOCK     = (1<<2),
-};
 
 // do not do anything here apart from add stuff; maintaining older
 // entries means log analysis is easier
@@ -105,6 +91,77 @@ enum Log_Event : uint8_t {
     DATA_NOT_BOTTOMED = 166,
 };
 
+enum class LogErrorSubsystem : uint8_t {
+    MAIN = 1,
+    RADIO = 2,
+    COMPASS = 3,
+    OPTFLOW = 4,   // not used
+    FAILSAFE_RADIO = 5,
+    FAILSAFE_BATT = 6,
+    FAILSAFE_GPS = 7,   // not used
+    FAILSAFE_GCS = 8,
+    FAILSAFE_FENCE = 9,
+    FLIGHT_MODE = 10,
+    GPS = 11,
+    CRASH_CHECK = 12,
+    FLIP = 13,
+    AUTOTUNE = 14,  // not used
+    PARACHUTES = 15,
+    EKFCHECK = 16,
+    FAILSAFE_EKFINAV = 17,
+    BARO = 18,
+    CPU = 19,
+    FAILSAFE_ADSB = 20,
+    TERRAIN = 21,
+    NAVIGATION = 22,
+    FAILSAFE_TERRAIN = 23,
+    EKF_PRIMARY = 24,
+    THRUST_LOSS_CHECK = 25,
+    FAILSAFE_SENSORS = 26,
+    FAILSAFE_LEAK = 27,
+    PILOT_INPUT = 28,
+};
+
+// bizarrely this enumeration has lots of duplicate values, offering
+// very little in the way of typesafety
+enum class LogErrorCode : uint8_t {
+// general error codes
+    ERROR_RESOLVED  = 0,
+    FAILED_TO_INITIALISE = 1,
+    UNHEALTHY = 4,
+// subsystem specific error codes -- radio
+    RADIO_LATE_FRAME = 2,
+// subsystem specific error codes -- failsafe_thr, batt, gps
+    FAILSAFE_RESOLVED = 0,
+    FAILSAFE_OCCURRED = 1,
+// subsystem specific error codes -- main
+    MAIN_INS_DELAY = 1,
+// subsystem specific error codes -- crash checker
+    CRASH_CHECK_CRASH = 1,
+    CRASH_CHECK_LOSS_OF_CONTROL = 2,
+// subsystem specific error codes -- flip
+    FLIP_ABANDONED = 2,
+// subsystem specific error codes -- terrain
+    MISSING_TERRAIN_DATA = 2,
+// subsystem specific error codes -- navigation
+    FAILED_TO_SET_DESTINATION = 2,
+    RESTARTED_RTL = 3,
+    FAILED_CIRCLE_INIT = 4,
+    DEST_OUTSIDE_FENCE = 5,
+
+// parachute failed to deploy because of low altitude or landed
+    PARACHUTE_TOO_LOW = 2,
+    PARACHUTE_LANDED = 3,
+// EKF check definitions
+    EKFCHECK_BAD_VARIANCE = 2,
+    EKFCHECK_VARIANCE_CLEARED = 0,
+// Baro specific error codes
+    BARO_GLITCH = 2,
+    BAD_DEPTH = 3, // sub-only
+// GPS specific error coces
+    GPS_GLITCH = 2,
+};
+
 // fwd declarations to avoid include errors
 class AC_AttitudeControl;
 class AC_PosControl;
@@ -157,8 +214,9 @@ public:
 
     void Write_Parameter(const char *name, float value);
     void Write_Event(Log_Event id);
+    void Write_Error(LogErrorSubsystem sub_system,
+                     LogErrorCode error_code);
     void Write_GPS(uint8_t instance, uint64_t time_us=0);
-    void Write_RFND(const RangeFinder &rangefinder);
     void Write_IMU();
     void Write_IMUDT(uint64_t time_us, uint8_t imu_mask);
     bool Write_ISBH(uint16_t seqno,
@@ -176,22 +234,22 @@ public:
     void Write_Vibration();
     void Write_RCIN(void);
     void Write_RCOUT(void);
-    void Write_RSSI(AP_RSSI &rssi);
+    void Write_RSSI();
+    void Write_Rally();
     void Write_Baro(uint64_t time_us=0);
     void Write_Power(void);
     void Write_AHRS2(AP_AHRS &ahrs);
     void Write_POS(AP_AHRS &ahrs);
 #if AP_AHRS_NAVEKF_AVAILABLE
-    void Write_EKF(AP_AHRS_NavEKF &ahrs);
+    void Write_EKF_Timing(const char *name, uint64_t time_us, const struct ekf_timing &timing);
 #endif
     void Write_Radio(const mavlink_radio_t &packet);
     void Write_Message(const char *message);
     void Write_MessageF(const char *fmt, ...);
-    void Write_CameraInfo(enum LogMessages msg, const AP_AHRS &ahrs, const Location &current_loc, uint64_t timestamp_us=0);
-    void Write_Camera(const AP_AHRS &ahrs, const Location &current_loc, uint64_t timestamp_us=0);
-    void Write_Trigger(const AP_AHRS &ahrs, const Location &current_loc);
+    void Write_CameraInfo(enum LogMessages msg, const Location &current_loc, uint64_t timestamp_us=0);
+    void Write_Camera(const Location &current_loc, uint64_t timestamp_us=0);
+    void Write_Trigger(const Location &current_loc);
     void Write_ESC(uint8_t id, uint64_t time_us, int32_t rpm, uint16_t voltage, uint16_t current, int16_t temperature, uint16_t current_tot);
-    void Write_Airspeed(AP_Airspeed &airspeed);
     void Write_Attitude(AP_AHRS &ahrs, const Vector3f &targets);
     void Write_AttitudeView(AP_AHRS_View &ahrs, const Vector3f &targets);
     void Write_Current();
@@ -215,15 +273,20 @@ public:
     void Write_Beacon(AP_Beacon &beacon);
     void Write_Proximity(AP_Proximity &proximity);
     void Write_SRTL(bool active, uint16_t num_points, uint16_t max_points, uint8_t action, const Vector3f& point);
+    void Write_OABendyRuler(bool active, float target_yaw, float margin, const Location &final_dest, const Location &oa_dest);
+    void Write_OADijkstra(uint8_t state, uint8_t curr_point, uint8_t tot_points, const Location &final_dest, const Location &oa_dest);
 
     void Write(const char *name, const char *labels, const char *fmt, ...);
     void Write(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
-    void WriteV(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, va_list arg_list);
+    void WriteCritical(const char *name, const char *labels, const char *fmt, ...);
+    void WriteCritical(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
+    void WriteV(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, va_list arg_list, bool is_critical=false);
 
     // This structure provides information on the internal member data of a PID for logging purposes
     struct PID_Info {
-        float desired;
+        float target;
         float actual;
+        float error;
         float P;
         float I;
         float D;
@@ -242,7 +305,7 @@ public:
     void flush(void);
 #endif
 
-    void handle_mavlink_msg(class GCS_MAVLINK &, mavlink_message_t* msg);
+    void handle_mavlink_msg(class GCS_MAVLINK &, const mavlink_message_t &msg);
 
     void periodic_tasks(); // may want to split this into GCS/non-GCS duties
 
@@ -251,12 +314,7 @@ public:
 
     // accesss to public parameters
     void set_force_log_disarmed(bool force_logging) { _force_log_disarmed = force_logging; }
-    bool log_while_disarmed(void) const {
-        if (_force_log_disarmed) {
-            return true;
-        }
-        return _params.log_disarmed != 0;
-    }
+    bool log_while_disarmed(void) const;
     uint8_t log_replay(void) const { return _params.log_replay; }
     
     vehicle_startup_message_Writer _vehicle_messages;
@@ -282,6 +340,10 @@ public:
     bool logging_present() const;
     bool logging_enabled() const;
     bool logging_failed() const;
+
+    // notify logging subsystem of an arming failure. This triggers
+    // logging for HAL_LOGGER_ARM_PERSIST seconds
+    void arming_failure() { _last_arming_failure_ms = AP_HAL::millis(); }
 
     void set_vehicle_armed(bool armed_state);
     bool vehicle_is_armed() const { return _armed; }
@@ -311,12 +373,17 @@ protected:
                                bool is_critical);
 
 private:
-    #define DATAFLASH_MAX_BACKENDS 2
+    #define LOGGER_MAX_BACKENDS 2
     uint8_t _next_backend;
-    AP_Logger_Backend *backends[DATAFLASH_MAX_BACKENDS];
+    AP_Logger_Backend *backends[LOGGER_MAX_BACKENDS];
     const AP_Int32 &_log_bitmask;
 
-    void internal_error() const;
+    enum class Backend_Type : uint8_t {
+        NONE       = 0,
+        FILESYSTEM = (1<<0),
+        MAVLINK    = (1<<1),
+        BLOCK      = (1<<2),
+    };
 
     /*
      * support for dynamic Write; user-supplies name, format,
@@ -356,11 +423,6 @@ private:
 
     bool _armed;
 
-#if AP_AHRS_NAVEKF_AVAILABLE
-    void Write_EKF2(AP_AHRS_NavEKF &ahrs);
-    void Write_EKF3(AP_AHRS_NavEKF &ahrs);
-#endif
-
     void Write_Baro_instance(uint64_t time_us, uint8_t baro_instance, enum LogMessages type);
     void Write_IMU_instance(uint64_t time_us,
                                 uint8_t imu_instance,
@@ -395,8 +457,6 @@ private:
     double multiplier_name(const uint8_t multiplier_id);
     bool seen_ids[256] = { };
 #endif
-
-    void Write_EKF_Timing(const char *name, uint64_t time_us, const struct ekf_timing &timing);
 
     // possibly expensive calls to start log system:
     void Prep();
@@ -437,14 +497,18 @@ private:
     uint32_t _log_data_page;
 
     GCS_MAVLINK *_log_sending_link;
+    HAL_Semaphore_Recursive _log_send_sem;
+
+    // last time arming failed, for backends
+    uint32_t _last_arming_failure_ms;
 
     bool should_handle_log_message();
-    void handle_log_message(class GCS_MAVLINK &, mavlink_message_t *msg);
+    void handle_log_message(class GCS_MAVLINK &, const mavlink_message_t &msg);
 
-    void handle_log_request_list(class GCS_MAVLINK &, mavlink_message_t *msg);
-    void handle_log_request_data(class GCS_MAVLINK &, mavlink_message_t *msg);
-    void handle_log_request_erase(class GCS_MAVLINK &, mavlink_message_t *msg);
-    void handle_log_request_end(class GCS_MAVLINK &, mavlink_message_t *msg);
+    void handle_log_request_list(class GCS_MAVLINK &, const mavlink_message_t &msg);
+    void handle_log_request_data(class GCS_MAVLINK &, const mavlink_message_t &msg);
+    void handle_log_request_erase(class GCS_MAVLINK &, const mavlink_message_t &msg);
+    void handle_log_request_end(class GCS_MAVLINK &, const mavlink_message_t &msg);
     void handle_log_send_listing(); // handle LISTING state
     void handle_log_sending(); // handle SENDING state
     bool handle_log_send_data(); // send data chunk to client

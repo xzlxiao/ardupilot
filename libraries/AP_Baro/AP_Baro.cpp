@@ -44,6 +44,8 @@
 #include "AP_Baro_UAVCAN.h"
 #endif
 
+#include <AP_Logger/AP_Logger.h>
+
 #define INTERNAL_TEMPERATURE_CLAMP 35.0f
 
 #ifndef HAL_BARO_FILTER_DEFAULT
@@ -181,17 +183,21 @@ AP_Baro::AP_Baro()
 // the altitude() or climb_rate() interfaces can be used
 void AP_Baro::calibrate(bool save)
 {
-    gcs().send_text(MAV_SEVERITY_INFO, "Calibrating barometer");
-
-    // reset the altitude offset when we calibrate. The altitude
-    // offset is supposed to be for within a flight
-    _alt_offset.set_and_save(0);
-
     // start by assuming all sensors are calibrated (for healthy() test)
     for (uint8_t i=0; i<_num_sensors; i++) {
         sensors[i].calibrated = true;
         sensors[i].alt_ok = true;
     }
+
+    if (hal.util->was_watchdog_reset()) {
+        gcs().send_text(MAV_SEVERITY_INFO, "Baro: skipping calibration");
+        return;
+    }
+    gcs().send_text(MAV_SEVERITY_INFO, "Calibrating barometer");
+
+    // reset the altitude offset when we calibrate. The altitude
+    // offset is supposed to be for within a flight
+    _alt_offset.set_and_save(0);
 
     // let the barometer settle for a full second after startup
     // the MS5611 reads quite a long way off for the first second,
@@ -201,8 +207,7 @@ void AP_Baro::calibrate(bool save)
         do {
             update();
             if (AP_HAL::millis() - tstart > 500) {
-                AP_HAL::panic("PANIC: AP_Baro::read unsuccessful "
-                        "for more than 500ms in AP_Baro::calibrate [2]\r\n");
+                AP_BoardConfig::sensor_config_error("Baro: unable to calibrate");
             }
             hal.scheduler->delay(10);
         } while (!healthy());
@@ -219,8 +224,7 @@ void AP_Baro::calibrate(bool save)
         do {
             update();
             if (AP_HAL::millis() - tstart > 500) {
-                AP_HAL::panic("PANIC: AP_Baro::read unsuccessful "
-                        "for more than 500ms in AP_Baro::calibrate [3]\r\n");
+                AP_BoardConfig::sensor_config_error("Baro: unable to calibrate");
             }
         } while (!healthy());
         for (uint8_t i=0; i<_num_sensors; i++) {
@@ -254,7 +258,7 @@ void AP_Baro::calibrate(bool save)
     if (num_calibrated) {
         return;
     }
-    AP_HAL::panic("AP_Baro: all sensors uncalibrated");
+    AP_BoardConfig::sensor_config_error("AP_Baro: all sensors uncalibrated");
 }
 
 /*
@@ -315,13 +319,18 @@ float AP_Baro::get_EAS2TAS(void)
         return _EAS2TAS;
     }
 
+    float pressure = get_pressure();
+    if (is_zero(pressure)) {
+        return 1.0f;
+    }
+
     // only estimate lapse rate for the difference from the ground location
     // provides a more consistent reading then trying to estimate a complete
     // ISA model atmosphere
     float tempK = get_ground_temperature() + C_TO_KELVIN - ISA_LAPSE_RATE * altitude;
-    const float eas2tas_squared = SSL_AIR_DENSITY / ((float)get_pressure() / (ISA_GAS_CONSTANT * tempK));
+    const float eas2tas_squared = SSL_AIR_DENSITY / (pressure / (ISA_GAS_CONSTANT * tempK));
     if (!is_positive(eas2tas_squared)) {
-        return 1.0;
+        return 1.0f;
     }
     _EAS2TAS = sqrtf(eas2tas_squared);
     _last_altitude_EAS2TAS = altitude;
@@ -446,11 +455,6 @@ void AP_Baro::init(void)
         return;
     }
 
-#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-    ADD_BACKEND(new AP_Baro_SITL(*this));
-    return;
-#endif
-
 #if HAL_WITH_UAVCAN
     // Detect UAVCAN Modules, try as many times as there are driver slots
     for (uint8_t i = 0; i < BARO_MAX_DRIVERS; i++) {
@@ -458,7 +462,10 @@ void AP_Baro::init(void)
     }
 #endif
 
-#if AP_FEATURE_BOARD_DETECT
+#if defined(HAL_BARO_PROBE_LIST)
+    // probe list from BARO lines in hwdef.dat
+    HAL_BARO_PROBE_LIST;
+#elif AP_FEATURE_BOARD_DETECT
     switch (AP_BoardConfig::get_board_type()) {
     case AP_BoardConfig::PX4_BOARD_PX4V1:
 #ifdef HAL_BARO_MS5611_I2C_BUS
@@ -482,11 +489,6 @@ void AP_Baro::init(void)
                                           std::move(hal.spi->get_device(HAL_BARO_MS5611_SPI_EXT_NAME))));
         ADD_BACKEND(AP_Baro_MS56XX::probe(*this,
                                           std::move(hal.spi->get_device(HAL_BARO_MS5611_NAME))));
-        break;
-
-    case AP_BoardConfig::PX4_BOARD_PIXRACER:
-        ADD_BACKEND(AP_Baro_MS56XX::probe(*this,
-                                          std::move(hal.spi->get_device(HAL_BARO_MS5611_SPI_INT_NAME))));
         break;
 
     case AP_BoardConfig::PX4_BOARD_MINDPXV2:
@@ -530,12 +532,24 @@ void AP_Baro::init(void)
         break;
 
     case AP_BoardConfig::PX4_BOARD_FMUV5:
+    case AP_BoardConfig::PX4_BOARD_FMUV6:
         ADD_BACKEND(AP_Baro_MS56XX::probe(*this,
                                           std::move(hal.spi->get_device(HAL_BARO_MS5611_NAME))));
         break;
 
     default:
         break;
+    }
+#elif CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    SITL::SITL *sitl = AP::sitl();
+    if (sitl == nullptr) {
+        AP_HAL::panic("No SITL pointer");
+    }
+    if (sitl->baro_count > 1) {
+        ::fprintf(stderr, "More than one baro not supported.  Sorry.");
+    }
+    if (sitl->baro_count == 1) {
+        ADD_BACKEND(new AP_Baro_SITL(*this));
     }
 #elif HAL_BARO_DEFAULT == HAL_BARO_HIL
     drivers[0] = new AP_Baro_HIL(*this);
@@ -569,6 +583,8 @@ void AP_Baro::init(void)
 #elif HAL_BARO_DEFAULT == HAL_BARO_DPS280_I2C
     ADD_BACKEND(AP_Baro_DPS280::probe(*this,
                                       std::move(hal.i2c_mgr->get_device(HAL_BARO_DPS280_I2C_BUS, HAL_BARO_DPS280_I2C_ADDR))));
+#elif HAL_BARO_DEFAULT == HAL_BARO_DPS280_SPI
+    ADD_BACKEND(AP_Baro_DPS280::probe(*this, std::move(hal.spi->get_device("dps280"))));
 #elif HAL_BARO_DEFAULT == HAL_BARO_LPS25H
 	ADD_BACKEND(AP_Baro_LPS2XH::probe(*this,
                                       std::move(hal.i2c_mgr->get_device(HAL_BARO_LPS25H_I2C_BUS, HAL_BARO_LPS25H_I2C_ADDR))));
@@ -587,6 +603,9 @@ void AP_Baro::init(void)
 #elif HAL_BARO_DEFAULT == HAL_BARO_LPS22H_SPI
     ADD_BACKEND(AP_Baro_LPS2XH::probe(*this,
                                       std::move(hal.spi->get_device(HAL_BARO_LPS22H_NAME))));
+#elif HAL_BARO_DEFAULT == HAL_BARO_LPS22H_I2C
+    ADD_BACKEND(AP_Baro_LPS2XH::probe(*this,
+                                      std::move(hal.i2c_mgr->get_device(HAL_BARO_LPS22H_I2C_BUS, HAL_BARO_LPS22H_I2C_ADDR))));
 #endif
 
     // can optionally have baro on I2C too
@@ -705,16 +724,16 @@ void AP_Baro::_probe_i2c_barometers(void)
     }
 }
 
-bool AP_Baro::should_df_log() const
+bool AP_Baro::should_log() const
 {
-    AP_Logger *instance = AP_Logger::get_singleton();
-    if (instance == nullptr) {
+    AP_Logger *logger = AP_Logger::get_singleton();
+    if (logger == nullptr) {
         return false;
     }
     if (_log_baro_bit == (uint32_t)-1) {
         return false;
     }
-    if (!instance->should_log(_log_baro_bit)) {
+    if (!logger->should_log(_log_baro_bit)) {
         return false;
     }
     return true;
@@ -725,6 +744,8 @@ bool AP_Baro::should_df_log() const
  */
 void AP_Baro::update(void)
 {
+    WITH_SEMAPHORE(_rsem);
+
     if (fabsf(_alt_offset - _alt_offset_active) > 0.01f) {
         // If there's more than 1cm difference then slowly slew to it via LPF.
         // The EKF does not like step inputs so this keeps it happy.
@@ -788,7 +809,7 @@ void AP_Baro::update(void)
     }
 
     // logging
-    if (should_df_log() && !AP::ahrs().have_ekf_logging()) {
+    if (should_log() && !AP::ahrs().have_ekf_logging()) {
         AP::logger().Write_Baro();
     }
 }

@@ -26,6 +26,8 @@
 #include <stdio.h>
 #endif
 
+#include "lua_generated_bindings.h"
+
 #ifndef SCRIPTING_DIRECTORY
   #if HAL_OS_FATFS_IO
     #define SCRIPTING_DIRECTORY "/APM/scripts"
@@ -39,8 +41,9 @@ extern const AP_HAL::HAL& hal;
 bool lua_scripts::overtime;
 jmp_buf lua_scripts::panic_jmp;
 
-lua_scripts::lua_scripts(const AP_Int32 &vm_steps, const AP_Int32 &heap_size)
-    : _vm_steps(vm_steps) {
+lua_scripts::lua_scripts(const AP_Int32 &vm_steps, const AP_Int32 &heap_size, const AP_Int8 &debug_level)
+    : _vm_steps(vm_steps),
+      _debug_level(debug_level) {
     _heap = hal.util->allocate_heap_memory(heap_size);
 }
 
@@ -66,16 +69,21 @@ lua_scripts::script_info *lua_scripts::load_script(lua_State *L, char *filename)
         switch (error) {
             case LUA_ERRSYNTAX:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Syntax error in %s", filename);
+                gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Error: %s", lua_tostring(L, -1));
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
             case LUA_ERRMEM:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Insufficent memory loading %s", filename);
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
             case LUA_ERRFILE:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Unable to load the file: %s", lua_tostring(L, -1));
                 hal.console->printf("Lua: File error: %s\n", lua_tostring(L, -1));
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
             default:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Unknown error (%d) loading %s", error, filename);
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
         }
     }
@@ -99,6 +107,7 @@ lua_scripts::script_info *lua_scripts::load_script(lua_State *L, char *filename)
         hal.console->printf("Lua: Scripting: Could not create sandbox: %s", lua_tostring(L, -1));
         return nullptr;
     }
+    load_generated_sandbox(L);
     lua_setupvalue(L, -2, 1);
 
     new_script->lua_ref = luaL_ref(L, LUA_REGISTRYINDEX);   // cache the reference
@@ -179,7 +188,7 @@ void lua_scripts::run_next_script(lua_State *L) {
     if(lua_pcall(L, 0, LUA_MULTRET, 0)) {
         if (overtime) {
             // script has consumed an excessive amount of CPU time
-            gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: %s exceeded time limit (%d)", script->name,  vm_steps);
+            gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: %s exceeded time limit (%d)", script->name,  (int)vm_steps);
             remove_script(L, script);
         } else {
             gcs().send_text(MAV_SEVERITY_INFO, "Lua: %s", lua_tostring(L, -1));
@@ -372,16 +381,20 @@ void lua_scripts::run(void) {
                 hal.scheduler->delay(scripts->next_run_ms - now_ms);
             }
 
-            gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Running %s", scripts->name);
+            if (_debug_level > 1) {
+                gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Running %s", scripts->name);
+            }
 
-            const uint32_t startMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+            const int startMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
             const uint32_t loadEnd = AP_HAL::micros();
 
             run_next_script(L);
 
             const uint32_t runEnd = AP_HAL::micros();
-            const uint32_t endMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
-            gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Time: %d Mem: %d", runEnd - loadEnd, endMem - startMem);
+            const int endMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+            if (_debug_level > 1) {
+                gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Time: %u Mem: %d", (unsigned int)(runEnd - loadEnd), (int)(endMem - startMem));
+            }
 
         } else {
             gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: No scripts to run");

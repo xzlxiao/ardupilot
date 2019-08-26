@@ -102,8 +102,7 @@ public:
     // is the AHRS subsystem healthy?
     bool healthy() const override;
 
-    // time that the AHRS has been up
-    uint32_t uptime_ms() const override;
+    bool get_velocity_NED(Vector3f &vec) const override;
 
 private:
     float _ki;
@@ -120,6 +119,8 @@ private:
     void            euler_angles(void);
     bool            have_gps(void) const;
     bool            use_fast_gains(void) const;
+    void            load_watchdog_home();
+    void            backup_attitude(void);
 
     // primary representation of attitude of board used for all inertial calculations
     Matrix3f _dcm_matrix;

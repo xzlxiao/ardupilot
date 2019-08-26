@@ -101,8 +101,7 @@ void UARTDriver::thread_init(void)
         return;
     }
 #if CH_CFG_USE_HEAP == TRUE
-    uart_thread_ctx = chThdCreateFromHeap(NULL,
-                                          THD_WORKING_AREA_SIZE(2048),
+    uart_thread_ctx = thread_create_alloc(THD_WORKING_AREA_SIZE(2048),
                                           "apm_uart",
                                           APM_UART_PRIORITY,
                                           uart_thread,
@@ -205,17 +204,23 @@ void UARTDriver::begin(uint32_t b, uint16_t rxS, uint16_t txS)
          * Initializes a serial-over-USB CDC driver.
          */
         if (!_device_initialised) {
-            sduObjectInit((SerialUSBDriver*)sdef.serial);
-            sduStart((SerialUSBDriver*)sdef.serial, &serusbcfg);
-            /*
-             * Activates the USB driver and then the USB bus pull-up on D+.
-             * Note, a delay is inserted in order to not have to disconnect the cable
-             * after a reset.
-             */
-            usbDisconnectBus(serusbcfg.usbp);
-            hal.scheduler->delay_microseconds(1500);
-            usbStart(serusbcfg.usbp, &usbcfg);
-            usbConnectBus(serusbcfg.usbp);
+            if ((SerialUSBDriver*)sdef.serial == &SDU1) {
+                sduObjectInit(&SDU1);
+                sduStart(&SDU1, &serusbcfg1);
+#if HAL_HAVE_DUAL_USB_CDC
+                sduObjectInit(&SDU2);
+                sduStart(&SDU2, &serusbcfg2);
+#endif
+                /*
+                * Activates the USB driver and then the USB bus pull-up on D+.
+                * Note, a delay is inserted in order to not have to disconnect the cable
+                * after a reset.
+                */
+                usbDisconnectBus(serusbcfg1.usbp);
+                hal.scheduler->delay_microseconds(1500);
+                usbStart(serusbcfg1.usbp, &usbcfg);
+                usbConnectBus(serusbcfg1.usbp);
+            }
             _device_initialised = true;
         }
 #endif
@@ -226,19 +231,22 @@ void UARTDriver::begin(uint32_t b, uint16_t rxS, uint16_t txS)
             //setup Rx DMA
             if(!_device_initialised) {
                 if(sdef.dma_rx) {
-                    rxdma = STM32_DMA_STREAM(sdef.dma_rx_stream_id);
+                    osalDbgAssert(rxdma == nullptr, "double DMA allocation");
                     chSysLock();
-                    bool dma_allocated = dmaStreamAllocate(rxdma,
-                                               12,  //IRQ Priority
-                                               (stm32_dmaisr_t)rxbuff_full_irq,
-                                               (void *)this);
-                    osalDbgAssert(!dma_allocated, "stream already allocated");
+                    rxdma = dmaStreamAllocI(sdef.dma_rx_stream_id,
+                                            12,  //IRQ Priority
+                                            (stm32_dmaisr_t)rxbuff_full_irq,
+                                            (void *)this);
+                    osalDbgAssert(rxdma, "stream alloc failed");
                     chSysUnlock();
-#if defined(STM32F7)
+#if defined(STM32F7) || defined(STM32H7)
                     dmaStreamSetPeripheral(rxdma, &((SerialDriver*)sdef.serial)->usart->RDR);
 #else
                     dmaStreamSetPeripheral(rxdma, &((SerialDriver*)sdef.serial)->usart->DR);
 #endif // STM32F7
+#if STM32_DMA_SUPPORTS_DMAMUX
+                    dmaSetRequestSource(rxdma, sdef.dma_rx_channel_id);
+#endif
                 }
                 if (sdef.dma_tx) {
                     // we only allow for sharing of the TX DMA channel, not the RX
@@ -281,8 +289,7 @@ void UARTDriver::begin(uint32_t b, uint16_t rxS, uint16_t txS)
                 //Start DMA
                 if(!was_initialised) {
                     uint32_t dmamode = STM32_DMA_CR_DMEIE | STM32_DMA_CR_TEIE;
-                    dmamode |= STM32_DMA_CR_CHSEL(STM32_DMA_GETCHANNEL(sdef.dma_rx_stream_id,
-                                                                       sdef.dma_rx_channel_id));
+                    dmamode |= STM32_DMA_CR_CHSEL(sdef.dma_rx_channel_id);
                     dmamode |= STM32_DMA_CR_PL(0);
                     dmaStreamSetMemory0(rxdma, rx_bounce_buf);
                     dmaStreamSetTransactionSize(rxdma, RX_BOUNCE_BUFSIZE);
@@ -314,27 +321,31 @@ void UARTDriver::begin(uint32_t b, uint16_t rxS, uint16_t txS)
 void UARTDriver::dma_tx_allocate(Shared_DMA *ctx)
 {
 #if HAL_USE_SERIAL == TRUE
-    osalDbgAssert(txdma == nullptr, "double DMA allocation");
-    txdma = STM32_DMA_STREAM(sdef.dma_tx_stream_id);
+    if (txdma != nullptr) {
+        return;
+    }
     chSysLock();
-    bool dma_allocated = dmaStreamAllocate(txdma,
-                                           12,  //IRQ Priority
-                                           (stm32_dmaisr_t)tx_complete,
-                                           (void *)this);
-    osalDbgAssert(!dma_allocated, "stream already allocated");
+    txdma = dmaStreamAllocI(sdef.dma_tx_stream_id,
+                            12,  //IRQ Priority
+                            (stm32_dmaisr_t)tx_complete,
+                            (void *)this);
+    osalDbgAssert(txdma, "stream alloc failed");
     chSysUnlock();
-#if defined(STM32F7)
+#if defined(STM32F7) || defined(STM32H7)
     dmaStreamSetPeripheral(txdma, &((SerialDriver*)sdef.serial)->usart->TDR);
 #else
     dmaStreamSetPeripheral(txdma, &((SerialDriver*)sdef.serial)->usart->DR);
 #endif // STM32F7
+#if STM32_DMA_SUPPORTS_DMAMUX
+    dmaSetRequestSource(txdma, sdef.dma_tx_channel_id);
+#endif
 #endif // HAL_USE_SERIAL
 }
 
 void UARTDriver::dma_tx_deallocate(Shared_DMA *ctx)
 {
     chSysLock();
-    dmaStreamRelease(txdma);
+    dmaStreamFreeI(txdma);
     txdma = nullptr;
     chSysUnlock();
 }
@@ -369,7 +380,7 @@ void UARTDriver::rx_irq_cb(void* self)
     if (!uart_drv->sdef.dma_rx) {
         return;
     }
-#if defined(STM32F7)
+#if defined(STM32F7) || defined(STM32H7)
     //disable dma, triggering DMA transfer complete interrupt
     uart_drv->rxdma->stream->CR &= ~STM32_DMA_CR_EN;
 #else
@@ -394,21 +405,21 @@ void UARTDriver::rxbuff_full_irq(void* self, uint32_t flags)
     if (!uart_drv->sdef.dma_rx) {
         return;
     }
+    cacheBufferInvalidate(uart_drv->rx_bounce_buf, RX_BOUNCE_BUFSIZE);
     uint8_t len = RX_BOUNCE_BUFSIZE - dmaStreamGetTransactionSize(uart_drv->rxdma);
-    if (len == 0) {
-        return;
-    }
-
-    if (uart_drv->half_duplex) {
-        uint32_t now = AP_HAL::micros();
-        if (now - uart_drv->hd_write_us < uart_drv->hd_read_delay_us) {
-            len = 0;
+    if (len > 0) {
+        if (uart_drv->half_duplex) {
+            uint32_t now = AP_HAL::micros();
+            if (now - uart_drv->hd_write_us < uart_drv->hd_read_delay_us) {
+                len = 0;
+            }
         }
+
+        cacheBufferInvalidate(uart_drv->rx_bounce_buf, len);
+        uart_drv->_readbuf.write(uart_drv->rx_bounce_buf, len);
+
+        uart_drv->receive_timestamp_update();
     }
-
-    uart_drv->_readbuf.write(uart_drv->rx_bounce_buf, len);
-
-    uart_drv->receive_timestamp_update();
     
     //restart the DMA transfers
     dmaStreamSetMemory0(uart_drv->rxdma, uart_drv->rx_bounce_buf);
@@ -548,7 +559,7 @@ size_t UARTDriver::write(uint8_t c)
     }
 
     while (_writebuf.space() == 0) {
-        if (!_blocking_writes) {
+        if (!_blocking_writes || unbuffered_writes) {
             _write_mutex.give();
             return 0;
         }
@@ -568,8 +579,12 @@ size_t UARTDriver::write(const uint8_t *buffer, size_t size)
 		return 0;
 	}
 
-    if (!_write_mutex.take_nonblocking()) {
-        return 0;
+    if (_blocking_writes && unbuffered_writes) {
+        _write_mutex.take_blocking();
+    } else {
+        if (!_write_mutex.take_nonblocking()) {
+            return 0;
+        }
     }
 
     if (_blocking_writes && !unbuffered_writes) {
@@ -636,14 +651,18 @@ size_t UARTDriver::write_locked(const uint8_t *buffer, size_t size, uint32_t key
  */
 bool UARTDriver::wait_timeout(uint16_t n, uint32_t timeout_ms)
 {
-    chEvtGetAndClearEvents(EVT_DATA);
-    if (available() >= n) {
-        return true;
+    uint32_t t0 = AP_HAL::millis();
+    while (available() < n) {
+        chEvtGetAndClearEvents(EVT_DATA);
+        _wait.n = n;
+        _wait.thread_ctx = chThdGetSelfX();
+        uint32_t now = AP_HAL::millis();
+        if (now - t0 >= timeout_ms) {
+            break;
+        }
+        chEvtWaitAnyTimeout(EVT_DATA, chTimeMS2I(timeout_ms - (now - t0)));
     }
-    _wait.n = n;
-    _wait.thread_ctx = chThdGetSelfX();
-    eventmask_t mask = chEvtWaitAnyTimeout(EVT_DATA, chTimeMS2I(timeout_ms));
-    return (mask & EVT_DATA) != 0;
+    return available() >= n;
 }
 
 /*
@@ -723,11 +742,11 @@ void UARTDriver::write_pending_bytes_DMA(uint32_t n)
 
     tx_bounce_buf_ready = false;
     osalDbgAssert(txdma != nullptr, "UART TX DMA allocation failed");
+    cacheBufferFlush(tx_bounce_buf, tx_len);
     dmaStreamSetMemory0(txdma, tx_bounce_buf);
     dmaStreamSetTransactionSize(txdma, tx_len);
     uint32_t dmamode = STM32_DMA_CR_DMEIE | STM32_DMA_CR_TEIE;
-    dmamode |= STM32_DMA_CR_CHSEL(STM32_DMA_GETCHANNEL(sdef.dma_tx_stream_id,
-                                                       sdef.dma_tx_channel_id));
+    dmamode |= STM32_DMA_CR_CHSEL(sdef.dma_tx_channel_id);
     dmamode |= STM32_DMA_CR_PL(0);
     dmaStreamSetMode(txdma, dmamode | STM32_DMA_CR_DIR_M2P |
                      STM32_DMA_CR_MINC | STM32_DMA_CR_TCIE);
@@ -865,6 +884,7 @@ void UARTDriver::_timer_tick(void)
         if (!(rxdma->stream->CR & STM32_DMA_CR_EN)) {
             uint8_t len = RX_BOUNCE_BUFSIZE - dmaStreamGetTransactionSize(rxdma);
             if (len != 0) {
+                cacheBufferInvalidate(rx_bounce_buf, len);
                 _readbuf.write(rx_bounce_buf, len);
 
                 receive_timestamp_update();
@@ -1162,7 +1182,7 @@ bool UARTDriver::set_options(uint8_t options)
     uint32_t cr3 = sd->usart->CR3;
     bool was_enabled = (sd->usart->CR1 & USART_CR1_UE);
 
-#ifdef STM32F7
+#if defined(STM32F7) || defined(STM32H7)
     // F7 has built-in support for inversion in all uarts
     if (options & OPTION_RXINV) {
         cr2 |= USART_CR2_RXINV;

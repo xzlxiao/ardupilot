@@ -8,26 +8,22 @@ void Tracker::update_ahrs()
     ahrs.update();
 }
 
-
 /*
   read and update compass
  */
 void Tracker::update_compass(void)
 {
-    if (g.compass_enabled && compass.read()) {
+    if (AP::compass().enabled() && compass.read()) {
         ahrs.set_compass(&compass);
-        if (should_log(MASK_LOG_COMPASS)) {
-            logger.Write_Compass();
-        }
     }
 }
 
-/*
- calibrate compass
-*/
-void Tracker::compass_cal_update() {
-    if (!hal.util->get_soft_armed()) {
-        compass.compass_cal_update();
+// Save compass offsets
+void Tracker::compass_save() {
+    if (AP::compass().enabled() &&
+        compass.get_learn_type() >= Compass::LEARN_INTERNAL &&
+        !hal.util->get_soft_armed()) {
+        compass.save_offsets();
     }
 }
 
@@ -71,11 +67,8 @@ void Tracker::update_GPS(void)
                 // Now have an initial GPS position
                 // use it as the HOME position in future startups
                 current_loc = gps.location();
-                set_home(current_loc);
-
-                if (g.compass_enabled) {
-                    // Set compass declination automatically
-                    compass.set_initial_location(gps.location().lat, gps.location().lng);
+                if (!set_home(current_loc)) {
+                    // silently ignored
                 }
                 ground_start_count = 0;
             }

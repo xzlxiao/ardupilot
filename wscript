@@ -4,7 +4,9 @@
 from __future__ import print_function
 
 import os.path
+import os
 import sys
+import subprocess
 sys.path.insert(0, 'Tools/ardupilotwaf/')
 
 import ardupilotwaf
@@ -66,7 +68,6 @@ def options(opt):
     removed_names = boards.get_removed_boards()
     g.add_option('--board',
         action='store',
-        choices=boards_names + removed_names,
         default=None,
         help='Target board to build, choices are %s.' % ', '.join(boards_names))
 
@@ -89,11 +90,6 @@ def options(opt):
         action='store_true',
         default=False,
         help='enable OS level asserts.')
-
-    g.add_option('--use-nuttx-iofw',
-        action='store_true',
-        default=False,
-        help='use old NuttX IO firmware for IOMCU')
 
     g.add_option('--bootloader',
         action='store_true',
@@ -130,9 +126,9 @@ submodules at specific revisions.
                  default=False,
                  help="Enable checking of math indexes")
 
-    g.add_option('--enable-scripting', action='store_true',
+    g.add_option('--disable-scripting', action='store_true',
                  default=False,
-                 help="Enable onboard scripting engine")
+                 help="Disable onboard scripting engine")
 
     g.add_option('--scripting-checks', action='store_true',
                  default=True,
@@ -183,6 +179,22 @@ configuration in order to save typing.
                  default=False,
                  help="Enable SFML graphics library")
 
+    g.add_option('--enable-sfml-audio', action='store_true',
+                 default=False,
+                 help="Enable SFML audio library")
+
+    g.add_option('--sitl-osd', action='store_true',
+                 default=False,
+                 help="Enable SITL OSD")
+
+    g.add_option('--sitl-rgbled', action='store_true',
+                 default=False,
+                 help="Enable SITL RGBLed")
+
+    g.add_option('--build-dates', action='store_true',
+                 default=False,
+                 help="Include build date in binaries.  Appears in AUTOPILOT_VERSION.os_sw_version")
+
     g.add_option('--sitl-flash-storage',
         action='store_true',
         default=False,
@@ -212,10 +224,19 @@ def _collect_autoconfig_files(cfg):
                 cfg.files.append(p)
 
 def configure(cfg):
+	# we need to enable debug mode when building for gconv, and force it to sitl
     if cfg.options.board is None:
         cfg.options.board = 'sitl'
 
+    boards_names = boards.get_boards_names()
+    if not cfg.options.board in boards_names:
+        for b in boards_names:
+            if b.upper() == cfg.options.board.upper():
+                cfg.options.board = b
+                break
+        
     cfg.env.BOARD = cfg.options.board
+    cfg.env.DEBUG = cfg.options.debug
     cfg.env.AUTOCONFIG = cfg.options.autoconfig
 
     _set_build_context_variant(cfg.env.BOARD)
@@ -225,7 +246,6 @@ def configure(cfg):
     cfg.env.DEBUG = cfg.options.debug
     cfg.env.ENABLE_ASSERTS = cfg.options.enable_asserts
     cfg.env.BOOTLOADER = cfg.options.bootloader
-    cfg.env.USE_NUTTX_IOFW = cfg.options.use_nuttx_iofw
 
     cfg.env.OPTIONS = cfg.options.__dict__
 
@@ -279,10 +299,10 @@ def configure(cfg):
         cfg.end_msg('disabled', color='YELLOW')
 
     cfg.start_msg('Scripting')
-    if cfg.options.enable_scripting:
-        cfg.end_msg('enabled')
-    else:
+    if cfg.options.disable_scripting:
         cfg.end_msg('disabled', color='YELLOW')
+    else:
+        cfg.end_msg('enabled')
 
     cfg.start_msg('Scripting runtime checks')
     if cfg.options.scripting_checks:
@@ -375,7 +395,7 @@ def _build_dynamic_sources(bld):
     if bld.get_board().with_uavcan or bld.env.HAL_WITH_UAVCAN==True:
         bld(
             features='uavcangen',
-            source=bld.srcnode.ant_glob('modules/uavcan/dsdl/uavcan/**/*.uavcan'),
+            source=bld.srcnode.ant_glob('modules/uavcan/dsdl/* libraries/AP_UAVCAN/dsdl/*', dir=True, src=False),
             output_dir='modules/uavcan/libuavcan/include/dsdlc_generated',
             name='uavcan',
             export_includes=[
@@ -471,6 +491,9 @@ def _build_post_funs(bld):
 
     if bld.env.SUBMODULE_UPDATE:
         bld.git_submodule_post_fun()
+
+    if bld.env.GCOV_ENABLED:
+      bld.add_post_fun(lcov_report)
 
 def _load_pre_build(bld):
     '''allow for a pre_build() function in build modules'''

@@ -4,7 +4,7 @@
 // valid! You should switch to using a HAL_BOARD flag in your local config.mk.
 
 // uncomment the lines below to disable features (flash sizes listed are for APM2 boards and will underestimate savings on Pixhawk and other boards)
-//#define LOGGING_ENABLED       DISABLED            // disable dataflash logging to save 11K of flash space
+//#define LOGGING_ENABLED       DISABLED            // disable logging to save 11K of flash space
 //#define MOUNT                 DISABLED            // disable the camera gimbal to save 8K of flash space
 //#define AUTOTUNE_ENABLED      DISABLED            // disable the auto tune functionality to save 7k of flash
 //#define AC_FENCE              DISABLED            // disable fence to save 2k of flash
@@ -13,6 +13,7 @@
 //#define PROXIMITY_ENABLED     DISABLED            // disable proximity sensors
 //#define AC_RALLY              DISABLED            // disable rally points library (must also disable terrain which relies on rally)
 //#define AC_AVOID_ENABLED      DISABLED            // disable stop-at-fence library
+//#define AC_OAPATHPLANNER_ENABLED DISABLED         // disable path planning around obstacles
 //#define AC_TERRAIN            DISABLED            // disable terrain library
 //#define PARACHUTE             DISABLED            // disable parachute release to save 1k of flash
 //#define NAV_GUIDED            DISABLED            // disable external navigation computer ability to control vehicle through MAV_CMD_NAV_GUIDED mission commands

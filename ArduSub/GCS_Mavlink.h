@@ -6,6 +6,8 @@ class GCS_MAVLINK_Sub : public GCS_MAVLINK {
 
 public:
 
+    using GCS_MAVLINK::GCS_MAVLINK;
+
 protected:
 
     uint32_t telem_delay() const override {
@@ -30,27 +32,25 @@ protected:
     int32_t global_position_int_alt() const override;
     int32_t global_position_int_relative_alt() const override;
 
-    bool vehicle_initialised() const override;
-
     bool set_home_to_current_location(bool lock) override WARN_IF_UNUSED;
     bool set_home(const Location& loc, bool lock) override WARN_IF_UNUSED;
 
     void send_nav_controller_output() const override;
+    void send_pid_tuning() override;
+
     uint64_t capabilities() const override;
 
 private:
 
-    void handleMessage(mavlink_message_t * msg) override;
+    void handleMessage(const mavlink_message_t &msg) override;
     bool handle_guided_request(AP_Mission::Mission_Command &cmd) override;
     void handle_change_alt_request(AP_Mission::Mission_Command &cmd) override;
-    void handle_rc_channels_override(const mavlink_message_t *msg) override;
+    void handle_rc_channels_override(const mavlink_message_t &msg) override;
     bool try_send_message(enum ap_message id) override;
 
     bool send_info(void);
 
-    MAV_TYPE frame_type() const override;
     MAV_MODE base_mode() const override;
-    uint32_t custom_mode() const override;
     MAV_STATE system_status() const override;
 
     int16_t vfr_hud_throttle() const override;

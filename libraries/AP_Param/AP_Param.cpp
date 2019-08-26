@@ -623,7 +623,7 @@ uint8_t AP_Param::type_size(enum ap_var_type type)
     case AP_PARAM_VECTOR3F:
         return 3*4;
     }
-    Debug("unknown type %u\n", type);
+    Debug("unknown type %d\n", type);
     return 0;
 }
 
@@ -825,7 +825,7 @@ AP_Param::find_group(const char *name, uint16_t vindex, ptrdiff_t group_offset,
 // Find a variable by name.
 //
 AP_Param *
-AP_Param::find(const char *name, enum ap_var_type *ptype)
+AP_Param::find(const char *name, enum ap_var_type *ptype, uint16_t *flags)
 {
     for (uint16_t i=0; i<_num_vars; i++) {
         uint8_t type = _var_info[i].type;
@@ -840,6 +840,9 @@ AP_Param::find(const char *name, enum ap_var_type *ptype)
             }
             AP_Param *ap = find_group(name + len, i, 0, group_info, ptype);
             if (ap != nullptr) {
+                if (flags != nullptr) {
+                    *flags = group_info->flags;
+                }
                 return ap;
             }
             // we continue looking as we want to allow top level
@@ -1096,7 +1099,9 @@ void AP_Param::save(bool force_save)
         // when we are disarmed then loop waiting for a slot to become
         // available. This guarantees completion for large parameter
         // set loads
+        hal.scheduler->expect_delay_ms(1);
         hal.scheduler->delay_microseconds(500);
+        hal.scheduler->expect_delay_ms(0);
     }
 }
 
@@ -1118,7 +1123,9 @@ void AP_Param::flush(void)
 {
     uint16_t counter = 200; // 2 seconds max
     while (counter-- && save_queue.available()) {
+        hal.scheduler->expect_delay_ms(10);
         hal.scheduler->delay(10);
+        hal.scheduler->expect_delay_ms(0);
     }
 }
 
@@ -1609,7 +1616,6 @@ AP_Param *AP_Param::next_scalar(ParamToken *token, enum ap_var_type *ptype)
                                                                     ginfo, group_nesting, &idx);
         if (info && ginfo &&
             (ginfo->flags & AP_PARAM_FLAG_ENABLE) &&
-            !(ginfo->flags & AP_PARAM_FLAG_IGNORE_ENABLE) &&
             ((AP_Int8 *)ap)->get() == 0 &&
             _hide_disabled_groups) {
             /*
@@ -1746,6 +1752,9 @@ void AP_Param::convert_old_parameters(const struct ConversionInfo *conversion_ta
     for (uint8_t i=0; i<table_size; i++) {
         convert_old_parameter(&conversion_table[i], 1.0f, flags);
     }
+    // we need to flush here to prevent a later set_default_by_name()
+    // causing a save to be done on a converted parameter
+    flush();
 }
 
 /*
@@ -1938,15 +1947,17 @@ bool AP_Param::load_defaults_file(const char *filename, bool last_pass)
     }
     free(mutable_filename);
 
-    if (param_overrides != nullptr) {
-        free(param_overrides);
-    }
+    delete[] param_overrides;
     num_param_overrides = 0;
 
-    param_overrides = (struct param_override *)malloc(sizeof(struct param_override)*num_defaults);
+    param_overrides = new param_override[num_defaults];
     if (param_overrides == nullptr) {
         AP_HAL::panic("AP_Param: Failed to allocate overrides");
         return false;
+    }
+
+    if (num_defaults == 0) {
+        return true;
     }
 
     saveptr = nullptr;
@@ -2027,28 +2038,26 @@ bool AP_Param::count_embedded_param_defaults(uint16_t &count)
  */
 void AP_Param::load_embedded_param_defaults(bool last_pass)
 {
-    if (param_overrides != nullptr) {
-        free(param_overrides);
-        param_overrides = nullptr;
-    }
-    
+    delete[] param_overrides;
+    param_overrides = nullptr;
     num_param_overrides = 0;
+
     uint16_t num_defaults = 0;
     if (!count_embedded_param_defaults(num_defaults)) {
         return;
     }
 
-    param_overrides = (struct param_override *)malloc(sizeof(struct param_override)*num_defaults);
+    param_overrides = new param_override[num_defaults];
     if (param_overrides == nullptr) {
         AP_HAL::panic("AP_Param: Failed to allocate overrides");
         return;
     }
-    
+
     const volatile char *ptr = param_defaults_data.data;
     uint16_t length = param_defaults_data.length;
     uint16_t idx = 0;
     
-    while (length) {
+    while (idx < num_defaults && length) {
         char line[100];
         char *pname;
         float value;
@@ -2326,6 +2335,7 @@ void AP_Param::show_all(AP_HAL::BetterStream *port, bool showKeyValues)
             port->printf("Key %i: Index %i: GroupElement %i  :  ", token.key, token.idx, token.group_element);
         }
         show(ap, token, type, port);
+        hal.scheduler->delay(1);
     }
 }
 #endif // AP_PARAM_KEY_DUMP

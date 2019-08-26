@@ -13,7 +13,8 @@ void Copter::read_barometer(void)
 void Copter::init_rangefinder(void)
 {
 #if RANGEFINDER_ENABLED == ENABLED
-   rangefinder.init();
+   rangefinder.set_log_rfnd_bit(MASK_LOG_CTUN);
+   rangefinder.init(ROTATION_PITCH_270);
    rangefinder_state.alt_cm_filt.set_cutoff_frequency(RANGEFINDER_WPNAV_FILT_HZ);
    rangefinder_state.enabled = rangefinder.has_orientation(ROTATION_PITCH_270);
 #endif
@@ -24,11 +25,6 @@ void Copter::read_rangefinder(void)
 {
 #if RANGEFINDER_ENABLED == ENABLED
     rangefinder.update();
-
-    if (rangefinder.num_sensors() > 0 &&
-        should_log(MASK_LOG_CTUN)) {
-        logger.Write_RFND(rangefinder);
-    }
 
     rangefinder_state.alt_healthy = ((rangefinder.status_orient(ROTATION_PITCH_270) == RangeFinder::RangeFinder_Good) && (rangefinder.range_valid_count_orient(ROTATION_PITCH_270) >= RANGEFINDER_HEALTH_MAX));
 
@@ -44,8 +40,10 @@ void Copter::read_rangefinder(void)
     // filter rangefinder for use by AC_WPNav
     uint32_t now = AP_HAL::millis();
 
+    const bool timed_out = now - rangefinder_state.last_healthy_ms > RANGEFINDER_TIMEOUT_MS;
+
     if (rangefinder_state.alt_healthy) {
-        if (now - rangefinder_state.last_healthy_ms > RANGEFINDER_TIMEOUT_MS) {
+        if (timed_out) {
             // reset filter if we haven't used it within the last second
             rangefinder_state.alt_cm_filt.reset(rangefinder_state.alt_cm);
         } else {
@@ -55,7 +53,9 @@ void Copter::read_rangefinder(void)
     }
 
     // send rangefinder altitude and health to waypoint navigation library
-    wp_nav->set_rangefinder_alt(rangefinder_state.enabled, rangefinder_state.alt_healthy, rangefinder_state.alt_cm_filt.get());
+    if (rangefinder_state.alt_healthy || timed_out) {
+        wp_nav->set_rangefinder_alt(rangefinder_state.enabled, rangefinder_state.alt_healthy, rangefinder_state.alt_cm_filt.get());
+    }
 
 #else
     rangefinder_state.enabled = false;
@@ -85,37 +85,6 @@ void Copter::rpm_update(void)
 #endif
 }
 
-// initialise compass
-void Copter::init_compass()
-{
-    if (!g.compass_enabled) {
-        return;
-    }
-
-    if (!compass.init() || !compass.read()) {
-        // make sure we don't pass a broken compass to DCM
-        hal.console->printf("COMPASS INIT ERROR\n");
-        Log_Write_Error(ERROR_SUBSYSTEM_COMPASS,ERROR_CODE_FAILED_TO_INITIALISE);
-        return;
-    }
-    ahrs.set_compass(&compass);
-}
-
-/*
-  initialise compass's location used for declination
- */
-void Copter::init_compass_location()
-{
-    // update initial location used for declination
-    if (!ap.compass_init_location) {
-        Location loc;
-        if (ahrs.get_position(loc)) {
-            compass.set_initial_location(loc.lat, loc.lng);
-            ap.compass_init_location = true;
-        }
-    }
-}
-
 // initialise optical flow sensor
 void Copter::init_optflow()
 {
@@ -127,11 +96,13 @@ void Copter::init_optflow()
 
 void Copter::compass_cal_update()
 {
-    static uint32_t compass_cal_stick_gesture_begin = 0;
+    compass.cal_update();
 
-    if (!hal.util->get_soft_armed()) {
-        compass.compass_cal_update();
+    if (hal.util->get_soft_armed()) {
+        return;
     }
+
+    static uint32_t compass_cal_stick_gesture_begin = 0;
 
     if (compass.is_calibrating()) {
         if (channel_yaw->get_control_in() < -4000 && channel_throttle->get_control_in() > 900) {

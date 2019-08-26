@@ -25,12 +25,11 @@
 #include <AP_Compass/AP_Compass.h>
 #include <AP_Airspeed/AP_Airspeed.h>
 #include <AP_Beacon/AP_Beacon.h>
-#include <AP_GPS/AP_GPS.h>
 #include <AP_InertialSensor/AP_InertialSensor.h>
-#include <AP_Baro/AP_Baro.h>
 #include <AP_Param/AP_Param.h>
-#include <AP_Common/Semaphore.h>
+#include <AP_Common/Location.h>
 
+class AP_NMEA_Output;
 class OpticalFlow;
 #define AP_AHRS_TRIM_LIMIT 10.0f        // maximum trim angle in degrees
 #define AP_AHRS_RP_P_MIN   0.05f        // minimum value for AHRS_RP_P parameter
@@ -86,9 +85,7 @@ public:
     }
 
     // init sets up INS board orientation
-    virtual void init() {
-        set_orientation();
-    };
+    virtual void init();
 
     // Accessors
     void set_fly_forward(bool b) {
@@ -145,7 +142,7 @@ public:
 
     void set_compass(Compass *compass) {
         _compass = compass;
-        set_orientation();
+        update_orientation();
     }
 
     const Compass* get_compass() const {
@@ -162,22 +159,14 @@ public:
 
     // allow for runtime change of orientation
     // this makes initial config easier
-    void set_orientation();
+    void update_orientation();
 
     void set_airspeed(AP_Airspeed *airspeed) {
         _airspeed = airspeed;
     }
 
-    void set_beacon(AP_Beacon *beacon) {
-        _beacon = beacon;
-    }
-
     const AP_Airspeed *get_airspeed(void) const {
         return _airspeed;
-    }
-
-    const AP_Beacon *get_beacon(void) const {
-        return _beacon;
     }
 
     // get the index of the current primary accelerometer sensor
@@ -217,27 +206,34 @@ public:
     }
 
     // check all cores providing consistent attitudes for prearm checks
-    virtual bool attitudes_consistent() const { return true; }
+    virtual bool attitudes_consistent(char *failure_msg, const uint8_t failure_msg_len) const { return true; }
 
     // is the EKF backend doing its own sensor logging?
     virtual bool have_ekf_logging(void) const {
         return false;
     }
 
+    // see if EKF lane switching is possible to avoid EKF failsafe
+    virtual void check_lane_switch(void) {}
+    
     // Euler angles (radians)
     float roll;
     float pitch;
     float yaw;
+
+    float get_roll() const { return roll; }
+    float get_pitch() const { return pitch; }
+    float get_yaw() const { return yaw; }
 
     // integer Euler angles (Degrees * 100)
     int32_t roll_sensor;
     int32_t pitch_sensor;
     int32_t yaw_sensor;
 
-    // return a smoothed and corrected gyro vector
+    // return a smoothed and corrected gyro vector in radians/second
     virtual const Vector3f &get_gyro(void) const = 0;
 
-    // return a smoothed and corrected gyro vector using the latest ins data (which may not have been consumed by the EKF yet)
+    // return a smoothed and corrected gyro vector in radians/second using the latest ins data (which may not have been consumed by the EKF yet)
     Vector3f get_gyro_latest(void) const;
 
     // return the current estimate of the gyro drift
@@ -261,9 +257,14 @@ public:
     // since last call
     virtual float get_error_yaw(void) const = 0;
 
-    // return a DCM rotation matrix representing our current
-    // attitude
+    // return a DCM rotation matrix representing our current attitude
     virtual const Matrix3f &get_rotation_body_to_ned(void) const = 0;
+
+    // return a Quaternion representing our current attitude
+    void get_quat_body_to_ned(Quaternion &quat) const {
+        quat.from_rotation_matrix(get_rotation_body_to_ned());
+    }
+
     const Matrix3f& get_rotation_autopilot_body_to_vehicle_body(void) const { return _rotation_autopilot_body_to_vehicle_body; }
     const Matrix3f& get_rotation_vehicle_body_to_autopilot_body(void) const { return _rotation_vehicle_body_to_autopilot_body; }
 
@@ -274,6 +275,7 @@ public:
     // otherwise false. This call fills in lat, lng and alt
     virtual bool get_position(struct Location &loc) const = 0;
 
+    // get latest altitude estimate above ground level in meters and validity flag
     virtual bool get_hagl(float &height) const { return false; }
 
     // return a wind estimation vector, in m/s
@@ -281,11 +283,11 @@ public:
 
     // return an airspeed estimate if available. return true
     // if we have an estimate
-    virtual bool airspeed_estimate(float *airspeed_ret) const;
+    virtual bool airspeed_estimate(float *airspeed_ret) const WARN_IF_UNUSED;
 
     // return a true airspeed estimate (navigation airspeed) if
     // available. return true if we have an estimate
-    bool airspeed_estimate_true(float *airspeed_ret) const {
+    bool airspeed_estimate_true(float *airspeed_ret) const WARN_IF_UNUSED {
         if (!airspeed_estimate(airspeed_ret)) {
             return false;
         }
@@ -294,12 +296,7 @@ public:
     }
 
     // get apparent to true airspeed ratio
-    float get_EAS2TAS(void) const {
-        if (_airspeed) {
-            return _airspeed->get_EAS2TAS();
-        }
-        return 1.0f;
-    }
+    float get_EAS2TAS(void) const;
 
     // return true if airspeed comes from an airspeed sensor, as
     // opposed to an IMU estimate
@@ -318,42 +315,42 @@ public:
     // return a ground velocity in meters/second, North/East/Down
     // order. This will only be accurate if have_inertial_nav() is
     // true
-    virtual bool get_velocity_NED(Vector3f &vec) const {
+    virtual bool get_velocity_NED(Vector3f &vec) const WARN_IF_UNUSED {
         return false;
     }
 
     // returns the expected NED magnetic field
-    virtual bool get_expected_mag_field_NED(Vector3f &ret) const {
+    virtual bool get_expected_mag_field_NED(Vector3f &ret) const WARN_IF_UNUSED {
         return false;
     }
 
     // returns the estimated magnetic field offsets in body frame
-    virtual bool get_mag_field_correction(Vector3f &ret) const {
+    virtual bool get_mag_field_correction(Vector3f &ret) const WARN_IF_UNUSED {
         return false;
     }
 
     // return a position relative to home in meters, North/East/Down
     // order. This will only be accurate if have_inertial_nav() is
     // true
-    virtual bool get_relative_position_NED_home(Vector3f &vec) const {
+    virtual bool get_relative_position_NED_home(Vector3f &vec) const WARN_IF_UNUSED {
         return false;
     }
 
     // return a position relative to origin in meters, North/East/Down
     // order. This will only be accurate if have_inertial_nav() is
     // true
-    virtual bool get_relative_position_NED_origin(Vector3f &vec) const {
+    virtual bool get_relative_position_NED_origin(Vector3f &vec) const WARN_IF_UNUSED {
         return false;
     }
     // return a position relative to home in meters, North/East
     // order. Return true if estimate is valid
-    virtual bool get_relative_position_NE_home(Vector2f &vecNE) const {
+    virtual bool get_relative_position_NE_home(Vector2f &vecNE) const WARN_IF_UNUSED {
         return false;
     }
 
     // return a position relative to origin in meters, North/East
     // order. Return true if estimate is valid
-    virtual bool get_relative_position_NE_origin(Vector2f &vecNE) const {
+    virtual bool get_relative_position_NE_origin(Vector2f &vecNE) const WARN_IF_UNUSED {
         return false;
     }
 
@@ -363,7 +360,7 @@ public:
 
     // return a Down position relative to origin in meters
     // Return true if estimate is valid
-    virtual bool get_relative_position_D_origin(float &posD) const {
+    virtual bool get_relative_position_D_origin(float &posD) const WARN_IF_UNUSED {
         return false;
     }
 
@@ -428,17 +425,17 @@ public:
     static const struct AP_Param::GroupInfo var_info[];
 
     // return secondary attitude solution if available, as eulers in radians
-    virtual bool get_secondary_attitude(Vector3f &eulers) const {
+    virtual bool get_secondary_attitude(Vector3f &eulers) const WARN_IF_UNUSED {
         return false;
     }
 
     // return secondary attitude solution if available, as quaternion
-    virtual bool get_secondary_quaternion(Quaternion &quat) const {
+    virtual bool get_secondary_quaternion(Quaternion &quat) const WARN_IF_UNUSED {
         return false;
     }
 
     // return secondary position solution if available
-    virtual bool get_secondary_position(struct Location &loc) const {
+    virtual bool get_secondary_position(struct Location &loc) const WARN_IF_UNUSED {
         return false;
     }
 
@@ -470,10 +467,10 @@ public:
     // set the EKF's origin location in 10e7 degrees.  This should only
     // be called when the EKF has no absolute position reference (i.e. GPS)
     // from which to decide the origin on its own
-    virtual bool set_origin(const Location &loc) { return false; }
+    virtual bool set_origin(const Location &loc) WARN_IF_UNUSED { return false; }
 
     // returns the inertial navigation origin in lat/lon/alt
-    virtual bool get_origin(Location &ret) const { return false; }
+    virtual bool get_origin(Location &ret) const  WARN_IF_UNUSED { return false; }
 
     void Log_Write_Home_And_Origin();
 
@@ -491,6 +488,8 @@ public:
     // is the AHRS subsystem healthy?
     virtual bool healthy(void) const = 0;
 
+    virtual bool prearm_healthy(void) const { return healthy(); }
+
     // true if the AHRS has completed initialisation
     virtual bool initialised(void) const {
         return true;
@@ -504,19 +503,19 @@ public:
 
     // return the amount of NE position change in metres due to the last reset
     // returns the time of the last reset or 0 if no reset has ever occurred
-    virtual uint32_t getLastPosNorthEastReset(Vector2f &pos) const {
+    virtual uint32_t getLastPosNorthEastReset(Vector2f &pos) const WARN_IF_UNUSED {
         return 0;
     };
 
     // return the amount of NE velocity change in metres/sec due to the last reset
     // returns the time of the last reset or 0 if no reset has ever occurred
-    virtual uint32_t getLastVelNorthEastReset(Vector2f &vel) const {
+    virtual uint32_t getLastVelNorthEastReset(Vector2f &vel) const WARN_IF_UNUSED {
         return 0;
     };
 
     // return the amount of vertical position change due to the last reset in meters
     // returns the time of the last reset or 0 if no reset has ever occurred
-    virtual uint32_t getLastPosDownReset(float &posDelta) const {
+    virtual uint32_t getLastPosDownReset(float &posDelta) const WARN_IF_UNUSED {
         return 0;
     };
 
@@ -525,7 +524,7 @@ public:
     // Adjusts the EKf origin height so that the EKF height + origin height is the same as before
     // Returns true if the height datum reset has been performed
     // If using a range finder for height no reset is performed and it returns false
-    virtual bool resetHeightDatum(void) {
+    virtual bool resetHeightDatum(void) WARN_IF_UNUSED {
         return false;
     }
 
@@ -536,9 +535,6 @@ public:
     virtual bool get_variances(float &velVar, float &posVar, float &hgtVar, Vector3f &magVar, float &tasVar, Vector2f &offset) const {
         return false;
     }
-
-    // time that the AHRS has been up
-    virtual uint32_t uptime_ms(void) const = 0;
 
     // get the selected ekf type, for allocation decisions
     int8_t get_ekf_type(void) const {
@@ -575,7 +571,7 @@ public:
     // get_hgt_ctrl_limit - get maximum height to be observed by the
     // control loops in meters and a validity flag.  It will return
     // false when no limiting is required
-    virtual bool get_hgt_ctrl_limit(float &limit) const { return false; };
+    virtual bool get_hgt_ctrl_limit(float &limit) const WARN_IF_UNUSED { return false; };
 
     // Write position and quaternion data from an external navigation system
     virtual void writeExtNavData(const Vector3f &sensOffset, const Vector3f &pos, const Quaternion &quat, float posErr, float angErr, uint32_t timeStamp_ms, uint32_t resetTime_ms) { }
@@ -586,6 +582,7 @@ public:
     }
 
 protected:
+    void update_nmea_out();
 
     // multi-thread access support
     HAL_Semaphore_Recursive _rsem;
@@ -644,9 +641,6 @@ protected:
     // pointer to airspeed object, if available
     AP_Airspeed     * _airspeed;
 
-    // pointer to beacon object, if available
-    AP_Beacon     * _beacon;
-
     // time in microseconds of last compass update
     uint32_t _compass_last_update;
 
@@ -694,6 +688,7 @@ protected:
 private:
     static AP_AHRS *_singleton;
 
+    AP_NMEA_Output* _nmea_out;
 };
 
 #include "AP_AHRS_DCM.h"

@@ -88,6 +88,7 @@ private:
     AP_OSD_Setting compass{true, 15, 3};
     AP_OSD_Setting wind{false, 2, 12};
     AP_OSD_Setting aspeed{false, 2, 13};
+    AP_OSD_Setting aspd1{false, 0, 0};
     AP_OSD_Setting aspd2{false, 0, 0};
     AP_OSD_Setting vspeed{true, 24, 9};
 
@@ -135,6 +136,7 @@ private:
     void draw_rssi(uint8_t x, uint8_t y);
     void draw_current(uint8_t x, uint8_t y);
     void draw_batused(uint8_t x, uint8_t y);
+    void draw_batused(uint8_t instance, uint8_t x, uint8_t y);
     void draw_sats(uint8_t x, uint8_t y);
     void draw_fltmode(uint8_t x, uint8_t y);
     void draw_message(uint8_t x, uint8_t y);
@@ -146,6 +148,7 @@ private:
     void draw_compass(uint8_t x, uint8_t y);
     void draw_wind(uint8_t x, uint8_t y);
     void draw_aspeed(uint8_t x, uint8_t y);
+    void draw_aspd1(uint8_t x, uint8_t y);
     void draw_aspd2(uint8_t x, uint8_t y);
     void draw_vspeed(uint8_t x, uint8_t y);
 
@@ -218,6 +221,9 @@ public:
     AP_Float warn_batvolt;
     AP_Float warn_bat2volt;
     AP_Int8 msgtime_s;
+    AP_Int8 arm_scr;
+    AP_Int8 disarm_scr;
+    AP_Int8 failsafe_scr;
 
     enum {
         OPTION_DECIMAL_PACK = 1U<<0,
@@ -263,7 +269,11 @@ private:
     bool switch_debouncer;
     uint32_t last_switch_ms;
     struct NavInfo nav_info;
-
+    int8_t previous_pwm_screen;
+    int8_t pre_fs_screen;
+    bool was_armed;
+    bool was_failsafe;
+    
     uint32_t last_update_ms;
     float last_distance_m;
     float max_dist_m;

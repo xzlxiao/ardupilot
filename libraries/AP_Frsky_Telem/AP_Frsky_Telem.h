@@ -85,10 +85,9 @@ for FrSky SPort Passthrough
 #define BATT_TOTALMAH_OFFSET        17
 // for autopilot status data
 #define AP_CONTROL_MODE_LIMIT       0x1F
-#define AP_SSIMPLE_FLAGS            0x6
-#define AP_SSIMPLE_OFFSET           4
-#define AP_LANDCOMPLETE_FLAG        0x80
-#define AP_INITIALIZED_FLAG         0x2000
+#define AP_SIMPLE_OFFSET            5
+#define AP_SSIMPLE_OFFSET           6
+#define AP_FLYING_OFFSET            7
 #define AP_ARMED_OFFSET             8
 #define AP_BATT_FS_OFFSET           9
 #define AP_EKF_FS_OFFSET            10
@@ -113,36 +112,23 @@ for FrSky SPort Passthrough
 
 class AP_Frsky_Telem {
 public:
-    AP_Frsky_Telem() {}
+    AP_Frsky_Telem();
 
     /* Do not allow copies */
     AP_Frsky_Telem(const AP_Frsky_Telem &other) = delete;
     AP_Frsky_Telem &operator=(const AP_Frsky_Telem&) = delete;
 
     // init - perform required initialisation
-    void init(const uint8_t mav_type,
-              const uint32_t *ap_valuep = nullptr);
+    bool init();
 
     // add statustext message to FrSky lib message queue
     void queue_message(MAV_SEVERITY severity, const char *text);
-
-    // update flight control mode. The control mode is vehicle type specific
-    void update_control_mode(uint8_t mode) { _ap.control_mode = mode; }
-
-    // update whether we're flying (used for Plane)
-    // set land_complete flag to 0 if is_flying
-    // set land_complete flag to 1 if not flying
-    void set_is_flying(bool is_flying) { (is_flying) ? (_ap.value &= ~AP_LANDCOMPLETE_FLAG) : (_ap.value |= AP_LANDCOMPLETE_FLAG); }
 
     // update error mask of sensors and subsystems. The mask uses the
     // MAV_SYS_STATUS_* values from mavlink. If a bit is set then it
     // indicates that the sensor or subsystem is present but not
     // functioning correctly
-    void update_sensor_status_flags(uint32_t error_mask) { _ap.sensor_status_flags = error_mask; }
-
-    static ObjectArray<mavlink_statustext_t> _statustext_queue;
-
-    void set_frame_string(const char *string) { _frame_string = string; }
+    uint32_t sensor_status_flags() const;
 
 private:
     AP_HAL::UARTDriver *_port;                  // UART used to send data to FrSky receiver
@@ -150,24 +136,12 @@ private:
     bool _initialised_uart;
     uint16_t _crc;
 
-    const char *_frame_string;
-
-    struct
-    {
-        uint8_t mav_type; // frame type (see MAV_TYPE in Mavlink definition file common.h)
-    } _params;
-    
-    struct
-    {
-        uint8_t control_mode;
-        uint32_t value;
-        const uint32_t *valuep;
-        uint32_t sensor_status_flags;
-    } _ap;
-
     uint32_t check_sensor_status_timer;
     uint32_t check_ekf_status_timer;
     uint8_t _paramID;
+
+    ObjectArray<mavlink_statustext_t> _statustext_queue;
+
     
     struct
     {
@@ -189,6 +163,7 @@ private:
         uint8_t new_byte;
         bool send_attiandrng;
         bool send_latitude;
+        bool send_chunk;
         uint32_t params_timer;
         uint32_t ap_status_timer;
         uint32_t batt_timer;

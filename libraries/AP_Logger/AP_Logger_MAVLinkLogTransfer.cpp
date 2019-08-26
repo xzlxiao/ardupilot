@@ -40,12 +40,12 @@ bool AP_Logger::should_handle_log_message()
 /**
    handle all types of log download requests from the GCS
  */
-void AP_Logger::handle_log_message(GCS_MAVLINK &link, mavlink_message_t *msg)
+void AP_Logger::handle_log_message(GCS_MAVLINK &link, const mavlink_message_t &msg)
 {
     if (!should_handle_log_message()) {
         return;
     }
-    switch (msg->msgid) {
+    switch (msg.msgid) {
     case MAVLINK_MSG_ID_LOG_REQUEST_LIST:
         handle_log_request_list(link, msg);
         break;
@@ -64,15 +64,17 @@ void AP_Logger::handle_log_message(GCS_MAVLINK &link, mavlink_message_t *msg)
 /**
    handle all types of log download requests from the GCS
  */
-void AP_Logger::handle_log_request_list(GCS_MAVLINK &link, mavlink_message_t *msg)
+void AP_Logger::handle_log_request_list(GCS_MAVLINK &link, const mavlink_message_t &msg)
 {
+    WITH_SEMAPHORE(_log_send_sem);
+
     if (_log_sending_link != nullptr) {
         link.send_text(MAV_SEVERITY_INFO, "Log download in progress");
         return;
     }
 
     mavlink_log_request_list_t packet;
-    mavlink_msg_log_request_list_decode(msg, &packet);
+    mavlink_msg_log_request_list_decode(&msg, &packet);
 
     _log_num_logs = get_num_logs();
     if (_log_num_logs == 0) {
@@ -100,8 +102,10 @@ void AP_Logger::handle_log_request_list(GCS_MAVLINK &link, mavlink_message_t *ms
 /**
    handle request for log data
  */
-void AP_Logger::handle_log_request_data(GCS_MAVLINK &link, mavlink_message_t *msg)
+void AP_Logger::handle_log_request_data(GCS_MAVLINK &link, const mavlink_message_t &msg)
 {
+    WITH_SEMAPHORE(_log_send_sem);
+
     if (_log_sending_link != nullptr) {
         // some GCS (e.g. MAVProxy) attempt to stream request_data
         // messages when they're filling gaps in the downloaded logs.
@@ -114,7 +118,7 @@ void AP_Logger::handle_log_request_data(GCS_MAVLINK &link, mavlink_message_t *ms
     }
 
     mavlink_log_request_data_t packet;
-    mavlink_msg_log_request_data_decode(msg, &packet);
+    mavlink_msg_log_request_data_decode(&msg, &packet);
 
     // consider opening or switching logs:
     if (transfer_activity != SENDING || _log_num_data != packet.id) {
@@ -154,10 +158,10 @@ void AP_Logger::handle_log_request_data(GCS_MAVLINK &link, mavlink_message_t *ms
 /**
    handle request to erase log data
  */
-void AP_Logger::handle_log_request_erase(GCS_MAVLINK &link, mavlink_message_t *msg)
+void AP_Logger::handle_log_request_erase(GCS_MAVLINK &link, const mavlink_message_t &msg)
 {
     // mavlink_log_erase_t packet;
-    // mavlink_msg_log_erase_decode(msg, &packet);
+    // mavlink_msg_log_erase_decode(&msg, &packet);
 
     EraseAll();
 }
@@ -165,10 +169,11 @@ void AP_Logger::handle_log_request_erase(GCS_MAVLINK &link, mavlink_message_t *m
 /**
    handle request to stop transfer and resume normal logging
  */
-void AP_Logger::handle_log_request_end(GCS_MAVLINK &link, mavlink_message_t *msg)
+void AP_Logger::handle_log_request_end(GCS_MAVLINK &link, const mavlink_message_t &msg)
 {
+    WITH_SEMAPHORE(_log_send_sem);
     mavlink_log_request_end_t packet;
-    mavlink_msg_log_request_end_decode(msg, &packet);
+    mavlink_msg_log_request_end_decode(&msg, &packet);
 
     transfer_activity = IDLE;
     _log_sending_link = nullptr;
@@ -179,6 +184,8 @@ void AP_Logger::handle_log_request_end(GCS_MAVLINK &link, mavlink_message_t *msg
  */
 void AP_Logger::handle_log_send()
 {
+    WITH_SEMAPHORE(_log_send_sem);
+
     if (_log_sending_link == nullptr) {
         return;
     }
@@ -200,6 +207,8 @@ void AP_Logger::handle_log_send()
 
 void AP_Logger::handle_log_sending()
 {
+    WITH_SEMAPHORE(_log_send_sem);
+
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     // assume USB speeds in SITL for the purposes of log download
     const uint8_t num_sends = 40;
@@ -233,6 +242,8 @@ void AP_Logger::handle_log_sending()
  */
 void AP_Logger::handle_log_send_listing()
 {
+    WITH_SEMAPHORE(_log_send_sem);
+
     if (!HAVE_PAYLOAD_SPACE(_log_sending_link->get_chan(), LOG_ENTRY)) {
         // no space
         return;
@@ -268,6 +279,8 @@ void AP_Logger::handle_log_send_listing()
  */
 bool AP_Logger::handle_log_send_data()
 {
+    WITH_SEMAPHORE(_log_send_sem);
+
     if (!HAVE_PAYLOAD_SPACE(_log_sending_link->get_chan(), LOG_DATA)) {
         // no space
         return false;

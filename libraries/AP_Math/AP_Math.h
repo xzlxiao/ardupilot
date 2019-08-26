@@ -9,8 +9,7 @@
 #include <AP_Param/AP_Param.h>
 
 #include "definitions.h"
-#include "edc.h"
-#include "location.h"
+#include "crc.h"
 #include "matrix3.h"
 #include "polygon.h"
 #include "quaternion.h"
@@ -18,6 +17,7 @@
 #include "vector2.h"
 #include "vector3.h"
 #include "spline5.h"
+#include "location.h"
 
 // define AP_Param types AP_Vector3f and Ap_Matrix3f
 AP_PARAMDEFV(Vector3f, Vector3f, AP_PARAM_VECTOR3F);
@@ -82,16 +82,16 @@ template <typename T>
 float safe_sqrt(const T v);
 
 // invOut is an inverted 4x4 matrix when returns true, otherwise matrix is Singular
-bool inverse3x3(float m[], float invOut[]);
+bool inverse3x3(float m[], float invOut[]) WARN_IF_UNUSED;
 
 // invOut is an inverted 3x3 matrix when returns true, otherwise matrix is Singular
-bool inverse4x4(float m[],float invOut[]);
+bool inverse4x4(float m[],float invOut[]) WARN_IF_UNUSED;
 
 // matrix multiplication of two NxN matrices
 float *mat_mul(float *A, float *B, uint8_t n);
 
 // matrix algebra
-bool inverse(float x[], float y[], uint16_t dim);
+bool inverse(float x[], float y[], uint16_t dim) WARN_IF_UNUSED;
 
 /*
  * Constrain an angle to be within the range: -180 to 180 degrees. The second
@@ -247,6 +247,19 @@ float linear_interpolate(float low_output, float high_output,
                          float var_value,
                          float var_low, float var_high);
 
+/* cubic "expo" curve generator 
+ * alpha range: [0,1] min to max expo
+ * input range: [-1,1]
+ */
+float expo_curve(float alpha, float input);
+
+/* throttle curve generator
+ * thr_mid: output at mid stick
+ * alpha: expo coefficient
+ * thr_in: [0-1]
+ */
+float throttle_curve(float thr_mid, float alpha, float thr_in);
+
 /* simple 16 bit random number generator */
 uint16_t get_random16(void);
 
@@ -257,7 +270,7 @@ float rand_float(void);
 Vector3f rand_vec3f(void);
 
 // confirm a value is a valid octal value
-bool is_valid_octal(uint16_t octal);
+bool is_valid_octal(uint16_t octal) WARN_IF_UNUSED;
 
 // return true if two rotations are equal
-bool rotation_equal(enum Rotation r1, enum Rotation r2);
+bool rotation_equal(enum Rotation r1, enum Rotation r2) WARN_IF_UNUSED;

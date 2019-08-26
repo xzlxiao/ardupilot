@@ -21,6 +21,7 @@
 #include <ch.h>
 #include "RCOutput.h"
 #include "hwdef/common/stm32_util.h"
+#include "hwdef/common/watchdog.h"
 #include "hwdef/common/flash.h"
 #include <AP_ROMFS/AP_ROMFS.h>
 #include "sdcard.h"
@@ -54,7 +55,7 @@ void* Util::malloc_type(size_t size, AP_HAL::Util::Memory_Type mem_type)
     if (mem_type == AP_HAL::Util::MEM_DMA_SAFE) {
         return malloc_dma(size);
     } else if (mem_type == AP_HAL::Util::MEM_FAST) {
-        return try_alloc_from_ccm_ram(size);
+        return malloc_fastmem(size);
     } else {
         return calloc(1, size);
     }
@@ -67,16 +68,6 @@ void Util::free_type(void *ptr, size_t size, AP_HAL::Util::Memory_Type mem_type)
     }
 }
 
-
-void* Util::try_alloc_from_ccm_ram(size_t size)
-{
-    void *ret = malloc_ccm(size);
-    if (ret == nullptr) {
-        //we failed to allocate from CCM so we are going to try common SRAM
-        ret = calloc(1, size);
-    }
-    return ret;
-}
 
 #ifdef ENABLE_HEAP
 
@@ -147,9 +138,10 @@ void Util::set_imu_temp(float current)
     uint32_t now = AP_HAL::millis();
     if (now - heater.last_update_ms < 1000) {
 #if defined(HAL_HEATER_GPIO_PIN)
-        // output as duty cycle to local pin
-        hal.gpio->write(HAL_HEATER_GPIO_PIN, heater.duty_counter < heater.output);
-        heater.duty_counter = (heater.duty_counter+1) % 100;
+        // output as duty cycle to local pin. Use a random sequence to
+        // prevent a periodic change to magnetic field
+        bool heater_on = (get_random16() < uint32_t(heater.output) * 0xFFFFU / 100U);
+        hal.gpio->write(HAL_HEATER_GPIO_PIN, heater_on);
 #endif
         return;
     }
@@ -239,13 +231,15 @@ bool Util::flash_bootloader()
     uint32_t fw_size;
     const char *fw_name = "bootloader.bin";
 
+    EXPECT_DELAY_MS(11000);
+
     uint8_t *fw = AP_ROMFS::find_decompress(fw_name, fw_size);
     if (!fw) {
         hal.console->printf("failed to find %s\n", fw_name);
         return false;
     }
 
-    const uint32_t addr = stm32_flash_getpageaddr(0);
+    const uint32_t addr = hal.flash->getpageaddr(0);
     if (!memcmp(fw, (const void*)addr, fw_size)) {
         hal.console->printf("Bootloader up-to-date\n");
         free(fw);
@@ -253,7 +247,7 @@ bool Util::flash_bootloader()
     }
 
     hal.console->printf("Erasing\n");
-    if (!stm32_flash_erasepage(0)) {
+    if (!hal.flash->erasepage(0)) {
         hal.console->printf("Erase failed\n");
         free(fw);
         return false;
@@ -261,10 +255,8 @@ bool Util::flash_bootloader()
     hal.console->printf("Flashing %s @%08x\n", fw_name, (unsigned int)addr);
     const uint8_t max_attempts = 10;
     for (uint8_t i=0; i<max_attempts; i++) {
-        void *context = hal.scheduler->disable_interrupts_save();
-        const int32_t written = stm32_flash_write(addr, fw, fw_size);
-        hal.scheduler->restore_interrupts(context);
-        if (written == -1 || written < fw_size) {
+        bool ok = hal.flash->write(addr, fw, fw_size);
+        if (!ok) {
             hal.console->printf("Flash failed! (attempt=%u/%u)\n",
                                 i+1,
                                 max_attempts);
@@ -317,6 +309,12 @@ bool Util::get_system_id_unformatted(uint8_t buf[], uint8_t &len)
  */
 bool Util::fs_init(void)
 {
-    return sdcard_init();
+    return sdcard_retry();
 }
 #endif
+
+// return true if the reason for the reboot was a watchdog reset
+bool Util::was_watchdog_reset() const
+{
+    return stm32_was_watchdog_reset();
+}

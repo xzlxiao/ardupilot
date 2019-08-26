@@ -81,7 +81,6 @@
 #include <AP_BoardConfig/AP_BoardConfig.h>
 #include <AP_BoardConfig/AP_BoardConfig_CAN.h>
 #include <AP_Frsky_Telem/AP_Frsky_Telem.h>
-#include <AP_Devo_Telem/AP_Devo_Telem.h>
 #include <AP_OSD/AP_OSD.h>
 #include <AP_ServoRelayEvents/AP_ServoRelayEvents.h>
 
@@ -105,8 +104,13 @@
 // Configuration
 #include "config.h"
 
+#if ADVANCED_FAILSAFE == ENABLED
+#include "afs_plane.h"
+#endif
+
 // Local modules
 #include "defines.h"
+#include "mode.h"
 
 #ifdef ENABLE_SCRIPTING
 #include <AP_Scripting/AP_Scripting.h>
@@ -120,25 +124,6 @@
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
 #include <SITL/SITL.h>
 #endif
-
-/*
-  a plane specific AP_AdvancedFailsafe class
- */
-class AP_AdvancedFailsafe_Plane : public AP_AdvancedFailsafe
-{
-public:
-    AP_AdvancedFailsafe_Plane(AP_Mission &_mission, const AP_GPS &_gps);
-
-    // called to set all outputs to termination state
-    void terminate_vehicle(void);
-    
-protected:
-    // setup failsafe values for if FMU firmware stops running
-    void setup_IO_failsafe(void);
-
-    // return the AFS mapped control mode
-    enum control_mode afs_mode(void);
-};
 
 /*
   main APM:Plane class
@@ -157,6 +142,30 @@ public:
     friend class GCS_Plane;
     friend class RC_Channel_Plane;
     friend class RC_Channels_Plane;
+
+    friend class Mode;
+    friend class ModeCircle;
+    friend class ModeStabilize;
+    friend class ModeTraining;
+    friend class ModeAcro;
+    friend class ModeFBWA;
+    friend class ModeFBWB;
+    friend class ModeCruise;
+    friend class ModeAutoTune;
+    friend class ModeAuto;
+    friend class ModeRTL;
+    friend class ModeLoiter;
+    friend class ModeAvoidADSB;
+    friend class ModeGuided;
+    friend class ModeInitializing;
+    friend class ModeManual;
+    friend class ModeQStabilize;
+    friend class ModeQHover;
+    friend class ModeQLoiter;
+    friend class ModeQLand;
+    friend class ModeQRTL;
+    friend class ModeQAcro;
+    friend class ModeQAutotune;
 
     Plane(void);
 
@@ -213,7 +222,7 @@ private:
 
     AP_InertialSensor ins;
 
-    RangeFinder rangefinder{serial_manager, ROTATION_PITCH_270};
+    RangeFinder rangefinder;
 
     AP_Vehicle::FixedWing::Rangefinder_State rangefinder_state;
 
@@ -278,11 +287,11 @@ private:
     AP_Relay relay;
 
     // handle servo and relay events
-    AP_ServoRelayEvents ServoRelayEvents{relay};
+    AP_ServoRelayEvents ServoRelayEvents;
 
     // Camera
 #if CAMERA == ENABLED
-    AP_Camera camera{&relay, MASK_LOG_CAMERA, current_loc, ahrs};
+    AP_Camera camera{MASK_LOG_CAMERA, current_loc};
 #endif
 
 #if OPTFLOW == ENABLED
@@ -300,11 +309,34 @@ private:
     AP_OSD osd;
 #endif
     
+    ModeCircle mode_circle;
+    ModeStabilize mode_stabilize;
+    ModeTraining mode_training;
+    ModeAcro mode_acro;
+    ModeFBWA mode_fbwa;
+    ModeFBWB mode_fbwb;
+    ModeCruise mode_cruise;
+    ModeAutoTune mode_autotune;
+    ModeAuto mode_auto;
+    ModeRTL mode_rtl;
+    ModeLoiter mode_loiter;
+    ModeAvoidADSB mode_avoidADSB;
+    ModeGuided mode_guided;
+    ModeInitializing mode_initializing;
+    ModeManual mode_manual;
+    ModeQStabilize mode_qstabilize;
+    ModeQHover mode_qhover;
+    ModeQLoiter mode_qloiter;
+    ModeQLand mode_qland;
+    ModeQRTL mode_qrtl;
+    ModeQAcro mode_qacro;
+    ModeQAutotune mode_qautotune;
+
     // This is the state of the flight control system
     // There are multiple states defined such as MANUAL, FBW-A, AUTO
-    enum FlightMode control_mode = INITIALISING;
+    Mode *control_mode = &mode_initializing;
     mode_reason_t control_mode_reason = MODE_REASON_UNKNOWN;
-    enum FlightMode previous_mode = INITIALISING;
+    Mode *previous_mode = &mode_initializing;
     mode_reason_t previous_mode_reason = MODE_REASON_UNKNOWN;
 
     // time of last mode change
@@ -317,9 +349,9 @@ private:
     // This is used to enable the inverted flight feature
     bool inverted_flight;
 
-    // This is used to enable the PX4IO override for testing
-    bool px4io_override_enabled;
-
+    // last time we ran roll/pitch stabilization
+    uint32_t last_stabilize_ms;
+    
     // Failsafe
     struct {
         // Used to track if the value on channel 3 (throtttle) has fallen below the failsafe threshold
@@ -333,7 +365,7 @@ private:
         bool adsb:1;
 
         // saved flight mode
-        enum FlightMode saved_mode;
+        enum Mode::Number saved_mode_number;
 
         // A tracking variable for type of failsafe active
         // Used for failsafe based on loss of RC signal or GCS signal
@@ -408,15 +440,6 @@ private:
                            FUNCTOR_BIND_MEMBER(&Plane::handle_battery_failsafe, void, const char*, const int8_t),
                            _failsafe_priorities};
 
-#if FRSKY_TELEM_ENABLED == ENABLED
-    // FrSky telemetry support
-    AP_Frsky_Telem frsky_telemetry;
-#endif
-#if DEVO_TELEM_ENABLED == ENABLED
-    // DEVO-M telemetry support
-    AP_DEVO_Telem devo_telemetry;
-#endif
-
     // Airspeed Sensors
     AP_Airspeed airspeed;
 
@@ -442,6 +465,7 @@ private:
         bool launchTimerStarted;
         uint8_t accel_event_counter;
         uint32_t accel_event_ms;
+        uint32_t start_time_ms;
     } takeoff_state;
     
     // ground steering controller state
@@ -649,10 +673,12 @@ private:
     AP_ADSB adsb;
 
     // avoidance of adsb enabled vehicles (normally manned vheicles)
-    AP_Avoidance_Plane avoidance_adsb{ahrs, adsb};
+    AP_Avoidance_Plane avoidance_adsb{adsb};
 
     // Outback Challenge Failsafe Support
-    AP_AdvancedFailsafe_Plane afs {mission, gps};
+#if ADVANCED_FAILSAFE == ENABLED
+    AP_AdvancedFailsafe_Plane afs {mission};
+#endif
 
     /*
       meta data to support counting the number of circles in a loiter
@@ -795,13 +821,8 @@ private:
     void send_fence_status(mavlink_channel_t chan);
     void send_servo_out(mavlink_channel_t chan);
     void send_wind(mavlink_channel_t chan);
-    void send_pid_info(const mavlink_channel_t chan, const AP_Logger::PID_Info *pid_info, const uint8_t axis, const float achieved);
-    void send_pid_tuning(mavlink_channel_t chan);
-    void send_rpm(mavlink_channel_t chan);
 
     void send_aoa_ssa(mavlink_channel_t chan);
-
-    void gcs_send_airspeed_calibration(const Vector3f &vg);
 
     void Log_Write_Fast(void);
     void Log_Write_Attitude(void);
@@ -811,7 +832,6 @@ private:
     void Log_Write_Nav_Tuning();
     void Log_Write_Status();
     void Log_Write_Sonar();
-    void Log_Arm_Disarm();
     void Log_Write_RC(void);
     void Log_Write_Vehicle_Startup_Messages();
     void Log_Write_AOA_SSA();
@@ -843,6 +863,7 @@ private:
     float lookahead_adjustment(void);
     float rangefinder_correction(void);
     void rangefinder_height_update(void);
+    void rangefinder_terrain_correction(float &height);
     void set_next_WP(const struct Location &loc);
     void set_guided_WP(void);
     void update_home();
@@ -889,6 +910,7 @@ private:
     bool geofence_check_minalt(void);
     bool geofence_check_maxalt(void);
     void geofence_check(bool altitude_check_only);
+    bool geofence_prearm_check(void);
     bool geofence_stickmixing(void);
     void geofence_send_status(mavlink_channel_t chan);
     bool geofence_breached(void);
@@ -915,24 +937,21 @@ private:
     int16_t rudder_input(void);
     void control_failsafe();
     bool trim_radio();
+    bool rc_throttle_value_ok(void) const;
     bool rc_failsafe_active(void) const;
     void read_rangefinder(void);
     void read_airspeed(void);
     void rpm_update(void);
     void init_ardupilot();
     void startup_ground(void);
-    enum FlightMode get_previous_mode();
-    void set_mode(enum FlightMode mode, mode_reason_t reason);
-    void exit_mode(enum FlightMode mode);
+    bool set_mode(Mode& new_mode, const mode_reason_t reason);
+    bool set_mode_by_number(const Mode::Number new_mode_number, const mode_reason_t reason);
+    Mode *mode_from_mode_num(const enum Mode::Number num);
     void check_long_failsafe();
     void check_short_failsafe();
     void startup_INS_ground(void);
-    void update_notify();
     bool should_log(uint32_t mask);
     int8_t throttle_percentage(void);
-    void change_arm_state(void);
-    bool disarm_motors(void);
-    bool arm_motors(AP_Arming::ArmingMethod method, bool do_arming_checks=true);
     bool auto_takeoff_check(void);
     void takeoff_calc_roll(void);
     void takeoff_calc_pitch(void);
@@ -946,8 +965,9 @@ private:
     void update_GPS_10Hz(void);
     void update_compass(void);
     void update_alt(void);
+#if ADVANCED_FAILSAFE == ENABLED
     void afs_fs_check(void);
-    void compass_cal_update();
+#endif
     void update_optical_flow(void);
     void one_second_loop(void);
     void airspeed_ratio_update(void);
@@ -955,7 +975,7 @@ private:
     void update_logging1(void);
     void update_logging2(void);
     void avoidance_adsb_update(void);
-    void update_flight_mode(void);
+    void update_control_mode(void);
     void stabilize();
     void set_servos_idle(void);
     void set_servos();
@@ -974,7 +994,6 @@ private:
     void update_is_flying_5Hz(void);
     void crash_detection_update(void);
     bool in_preLaunch_flight_stage(void);
-    void handle_auto_mode(void);
     void calc_throttle();
     void calc_nav_roll();
     void calc_nav_pitch();
@@ -986,7 +1005,6 @@ private:
     bool stick_mixing_enabled(void);
     void stabilize_roll(float speed_scaler);
     void stabilize_pitch(float speed_scaler);
-    static void stick_mix_channel(RC_Channel *channel, int16_t &servo_out);
     void stabilize_stick_mixing_direct();
     void stabilize_stick_mixing_fbw();
     void stabilize_yaw(float speed_scaler);
@@ -1024,7 +1042,7 @@ private:
     void do_set_home(const AP_Mission::Mission_Command& cmd);
     bool start_command_callback(const AP_Mission::Mission_Command &cmd);
     bool verify_command_callback(const AP_Mission::Mission_Command& cmd);
-    void notify_flight_mode(enum FlightMode mode);
+    void notify_mode(const Mode& mode);
     void log_init();
     void parachute_check();
 #if PARACHUTE == ENABLED
@@ -1036,7 +1054,6 @@ private:
     void publish_osd_info();
 #endif
     void accel_cal_update(void);
-    void update_soft_armed();
 #if SOARING_ENABLED == ENABLED
     void update_soaring();
 #endif
@@ -1057,11 +1074,13 @@ private:
         Failsafe_Action_Land      = 2,
         Failsafe_Action_Terminate = 3,
         Failsafe_Action_QLand     = 4,
+        Failsafe_Action_Parachute = 5
     };
 
     // list of priorities, highest priority first
     static constexpr int8_t _failsafe_priorities[] = {
                                                       Failsafe_Action_Terminate,
+                                                      Failsafe_Action_Parachute,
                                                       Failsafe_Action_QLand,
                                                       Failsafe_Action_Land,
                                                       Failsafe_Action_RTL,

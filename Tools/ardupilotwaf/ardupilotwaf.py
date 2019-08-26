@@ -45,6 +45,7 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AP_SerialManager',
     'AP_Terrain',
     'AP_Vehicle',
+    'AP_InternalError',
     'AP_Logger',
     'Filter',
     'GCS_MAVLink',
@@ -82,6 +83,7 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AP_LandingGear',
     'AP_RobotisServo',
     'AP_ToshibaCAN',
+    'AP_NMEA_Output',
 ]
 
 def get_legacy_defines(sketch_name):

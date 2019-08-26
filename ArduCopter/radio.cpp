@@ -11,7 +11,6 @@ void Copter::default_dead_zones()
 #if FRAME_CONFIG == HELI_FRAME
     channel_throttle->set_default_dead_zone(10);
     channel_yaw->set_default_dead_zone(15);
-    rc().channel(CH_6)->set_default_dead_zone(10);
 #else
     channel_throttle->set_default_dead_zone(30);
     channel_yaw->set_default_dead_zone(20);
@@ -45,7 +44,7 @@ void Copter::init_rc_in()
     ap.throttle_zero = true;
 }
 
- // init_rc_out -- initialise motors and check if pilot wants to perform ESC calibration
+ // init_rc_out -- initialise motors
 void Copter::init_rc_out()
 {
     motors->set_loop_rate(scheduler.get_loop_rate_hz());
@@ -75,9 +74,6 @@ void Copter::init_rc_out()
     uint16_t safety_ignore_mask = (~copter.motors->get_motor_mask()) & 0x3FFF;
     BoardConfig.set_default_safety_ignore_mask(safety_ignore_mask);
 #endif
-
-    // check if we should enter esc calibration mode
-    esc_calibration_startup_check();
 }
 
 
@@ -136,7 +132,7 @@ void Copter::read_radio()
     }
 
     // Nobody ever talks to us.  Log an error and enter failsafe.
-    Log_Write_Error(ERROR_SUBSYSTEM_RADIO, ERROR_CODE_RADIO_LATE_FRAME);
+    AP::logger().Write_Error(LogErrorSubsystem::RADIO, LogErrorCode::RADIO_LATE_FRAME);
     set_failsafe_radio(true);
 }
 
@@ -191,7 +187,7 @@ void Copter::set_throttle_zero_flag(int16_t throttle_control)
     // if not using throttle interlock and non-zero throttle and not E-stopped,
     // or using motor interlock and it's enabled, then motors are running, 
     // and we are flying. Immediately set as non-zero
-    if ((!ap.using_interlock && (throttle_control > 0) && !ap.motor_emergency_stop) ||
+    if ((!ap.using_interlock && (throttle_control > 0) && !SRV_Channels::get_emergency_stop()) ||
         (ap.using_interlock && motors->get_interlock()) ||
         ap.armed_with_switch) {
         last_nonzero_throttle_ms = tnow_ms;
@@ -206,7 +202,7 @@ void Copter::radio_passthrough_to_motors()
 {
     motors->set_radio_passthrough(channel_roll->norm_input(),
                                   channel_pitch->norm_input(),
-                                  channel_throttle->get_control_in_zero_dz()*0.001,
+                                  channel_throttle->get_control_in_zero_dz()*0.001f,
                                   channel_yaw->norm_input());
 }
 

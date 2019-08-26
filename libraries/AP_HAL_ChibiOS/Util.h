@@ -36,8 +36,8 @@ public:
 
 #ifdef ENABLE_HEAP
     // heap functions, note that a heap once alloc'd cannot be dealloc'd
-    virtual void *allocate_heap_memory(size_t size);
-    virtual void *heap_realloc(void *heap, void *ptr, size_t new_size);
+    virtual void *allocate_heap_memory(size_t size) override;
+    virtual void *heap_realloc(void *heap, void *ptr, size_t new_size) override;
 #endif // ENABLE_HEAP
 
     /*
@@ -64,7 +64,10 @@ public:
      */
     bool fs_init(void) override;
 #endif
-    
+
+    // return true if the reason for the reboot was a watchdog reset
+    bool was_watchdog_reset() const override;
+
 private:
 #ifdef HAL_PWM_ALARM
     struct ToneAlarmPwmGroup {
@@ -75,8 +78,6 @@ private:
 
     static ToneAlarmPwmGroup _toneAlarm_pwm_group;
 #endif
-    void* try_alloc_from_ccm_ram(size_t size);
-    uint32_t available_memory_in_ccm_ram(void);
 
 #if HAL_HAVE_IMU_HEATER
     struct {
@@ -85,7 +86,6 @@ private:
         uint16_t count;
         float sum;
         uint32_t last_update_ms;
-        uint8_t duty_counter;
         float output;
     } heater;
 #endif
@@ -107,4 +107,7 @@ private:
     static memory_heap_t scripting_heap;
 #endif // ENABLE_HEAP
 
+    // stm32F4 and F7 have 20 total RTC backup registers. We use the first one for boot type
+    // flags, so 19 available for persistent data
+    static_assert(sizeof(persistent_data) <= 19*4, "watchdog persistent data too large");
 };

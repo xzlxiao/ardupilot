@@ -22,6 +22,7 @@
 
 #include "Scheduler.h"
 #include "hwdef/common/stm32_util.h"
+#include <AP_InternalError/AP_InternalError.h>
 
 #include "ch.h"
 #include "hal.h"
@@ -118,7 +119,7 @@ I2CDeviceManager::I2CDeviceManager(void)
           drop the speed to be the minimum speed requested
          */
         businfo[i].busclock = HAL_I2C_MAX_CLOCK;
-#if defined(STM32F7)
+#if defined(STM32F7) || defined(STM32H7)
         if (businfo[i].busclock <= 100000) {
             businfo[i].i2ccfg.timingr = HAL_I2C_F7_100_TIMINGR;
             businfo[i].busclock = 100000;
@@ -150,7 +151,7 @@ I2CDevice::I2CDevice(uint8_t busnum, uint8_t address, uint32_t bus_clock, bool u
     asprintf(&pname, "I2C:%u:%02x",
              (unsigned)busnum, (unsigned)address);
     if (bus_clock < bus.busclock) {
-#if defined(STM32F7)
+#if defined(STM32F7) || defined(STM32H7)
         if (bus_clock <= 100000) {
             bus.i2ccfg.timingr = HAL_I2C_F7_100_TIMINGR;
             bus.busclock = 100000;
@@ -197,7 +198,7 @@ bool I2CDevice::transfer(const uint8_t *send, uint32_t send_len,
         return false;
     }
     
-#if defined(STM32F7)
+#if defined(STM32F7) || defined(STM32H7)
     if (_use_smbus) {
         bus.i2ccfg.cr1 |= I2C_CR1_SMBHEN;
     } else {
@@ -247,7 +248,7 @@ bool I2CDevice::_transfer(const uint8_t *send, uint32_t send_len,
     for(uint8_t i=0 ; i <= _retries; i++) {
         int ret;
         // calculate a timeout as twice the expected transfer time, and set as min of 4ms
-        uint32_t timeout_ms = 1+2*(((8*1000000UL/bus.busclock)*MAX(send_len, recv_len))/1000);
+        uint32_t timeout_ms = 1+2*(((8*1000000UL/bus.busclock)*(send_len+recv_len))/1000);
         timeout_ms = MAX(timeout_ms, _timeout_ms);
 
         // we get the lock and start the bus inside the retry loop to
@@ -258,6 +259,10 @@ bool I2CDevice::_transfer(const uint8_t *send, uint32_t send_len,
         i2cStart(I2CD[bus.busnum].i2c, &bus.i2ccfg);
         osalDbgAssert(I2CD[bus.busnum].i2c->state == I2C_READY, "i2cStart state");
         
+        osalSysLock();
+        hal.util->persistent_data.i2c_count++;
+        osalSysUnlock();
+
         if(send_len == 0) {
             ret = i2cMasterReceiveTimeout(I2CD[bus.busnum].i2c, _address, recv, recv_len, chTimeMS2I(timeout_ms));
         } else {
@@ -265,11 +270,19 @@ bool I2CDevice::_transfer(const uint8_t *send, uint32_t send_len,
                                            recv, recv_len, chTimeMS2I(timeout_ms));
         }
 
-        i2cStop(I2CD[bus.busnum].i2c);
+        i2cSoftStop(I2CD[bus.busnum].i2c);
         osalDbgAssert(I2CD[bus.busnum].i2c->state == I2C_STOP, "i2cStart state");
-        
+
         bus.dma_handle->unlock();
         
+        if (I2CD[bus.busnum].i2c->errors & I2C_ISR_LIMIT) {
+            AP::internalerror().error(AP_InternalError::error_t::i2c_isr);
+            break;
+        }
+
+        AP_HAL::Util::PersistentData &pd = hal.util->persistent_data;
+        pd.i2c_isr_count += I2CD[bus.busnum].i2c->isr_count;
+
         if (ret == MSG_OK) {
             bus.bouncebuffer_finish(send, recv, recv_len);
             i2cReleaseBus(I2CD[bus.busnum].i2c);

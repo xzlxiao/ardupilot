@@ -4,6 +4,7 @@
 #include "AP_NavEKF2_core.h"
 #include <AP_AHRS/AP_AHRS.h>
 #include <AP_Vehicle/AP_Vehicle.h>
+#include <AP_GPS/AP_GPS.h>
 
 #include <stdio.h>
 
@@ -61,7 +62,7 @@ void NavEKF2_core::getFlowDebug(float &varFlow, float &gndOffset, float &flowInn
     gndOffset = terrainState;
     flowInnovX = innovOptFlow[0];
     flowInnovY = innovOptFlow[1];
-    auxInnov = auxFlowObsInnov;
+    auxInnov = norm(auxFlowObsInnov.x,auxFlowObsInnov.y);
     HAGL = terrainState - stateStruct.position.z;
     rngInnov = innovRng;
     range = rangeDataDelayed.rng;
@@ -252,7 +253,7 @@ bool NavEKF2_core::getPosNE(Vector2f &posNE) const
             if ((AP::gps().status() >= AP_GPS::GPS_OK_FIX_2D)) {
                 // If the origin has been set and we have GPS, then return the GPS position relative to the origin
                 const struct Location &gpsloc = AP::gps().location();
-                Vector2f tempPosNE = location_diff(EKF_origin, gpsloc);
+                const Vector2f tempPosNE = EKF_origin.get_distance_NE(gpsloc);
                 posNE.x = tempPosNE.x;
                 posNE.y = tempPosNE.y;
                 return false;
@@ -328,7 +329,7 @@ bool NavEKF2_core::getLLH(struct Location &loc) const
             loc.lat = EKF_origin.lat;
             loc.lng = EKF_origin.lng;
             // correct for IMU offset (EKF calculations are at the IMU position)
-            location_offset(loc, (outputDataNew.position.x + posOffsetNED.x), (outputDataNew.position.y + posOffsetNED.y));
+            loc.offset((outputDataNew.position.x + posOffsetNED.x), (outputDataNew.position.y + posOffsetNED.y));
             return true;
         } else {
             // we could be in constant position mode  because the vehicle has taken off without GPS, or has lost GPS
@@ -342,7 +343,7 @@ bool NavEKF2_core::getLLH(struct Location &loc) const
             } else {
                 // if no GPS fix, provide last known position before entering the mode
                 // correct for IMU offset (EKF calculations are at the IMU position)
-                location_offset(loc, (lastKnownPositionNE.x + posOffsetNED.x), (lastKnownPositionNE.y + posOffsetNED.y));
+                loc.offset((lastKnownPositionNE.x + posOffsetNED.x), (lastKnownPositionNE.y + posOffsetNED.y));
                 return false;
             }
         }
@@ -594,7 +595,7 @@ void NavEKF2_core::send_status_report(mavlink_channel_t chan)
 // report the reason for why the backend is refusing to initialise
 const char *NavEKF2_core::prearm_failure_reason(void) const
 {
-    if (imuSampleTime_ms - lastGpsVelFail_ms > 10000) {
+    if (gpsGoodToAlign) {
         // we are not failing
         return nullptr;
     }
@@ -613,5 +614,11 @@ uint8_t NavEKF2_core::getFramesSincePredict(void) const
 void NavEKF2_core::getOutputTrackingError(Vector3f &error) const
 {
     error = outputTrackError;
+}
+
+// return true when external nav data is also being used as a yaw observation
+bool NavEKF2_core::isExtNavUsedForYaw()
+{
+    return extNavUsedForYaw;
 }
 
